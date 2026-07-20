@@ -1,0 +1,15 @@
+---
+# Path-specific configuration to silence a known actionlint false positive: action.yml
+# intentionally references a prebuilt image (docker://ghcr.io/b-arol-o/publish-md-pdf:v1)
+# whose "entrypoint" key points to a path baked into that image
+# (/usr/local/bin/entrypoint.sh), not a file in this repository. actionlint's file-existence
+# check for "entrypoint" doesn't distinguish prebuilt "docker://" images from a locally-built
+# "Dockerfile" image, so it always resolves the path relative to the repo and reports it
+# missing. See https://github.com/rhysd/actionlint/blob/main/rule_action.go
+# (checkLocalDockerActionRuns).
+paths:
+  .github/workflows/ci.yml:
+    ignore:
+      - 'file ".+/entrypoint\.sh" does not exist in ".+"\. it is specified at "entrypoint" key in "runs" section in "publish-md-pdf" action'
+
+# EOF
