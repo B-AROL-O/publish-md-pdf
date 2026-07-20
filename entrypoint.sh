@@ -9,9 +9,16 @@ set -e
 
 args=()
 
-[ -n "$INPUT_OUTPUT_DIR" ] && args+=(--output-dir "$INPUT_OUTPUT_DIR")
-[ -n "$INPUT_OUTPUT_NAME" ] && args+=(--output-name "$INPUT_OUTPUT_NAME")
-[ -n "$INPUT_CSS_FILE" ] && args+=(--css-file "$INPUT_CSS_FILE")
+# GitHub Actions exports hyphenated input names with the hyphen preserved
+# (e.g. INPUT_OUTPUT-DIR, not INPUT_OUTPUT_DIR), which isn't a valid bash
+# identifier, so it must be read via printenv rather than "$INPUT_...".
+output_dir="$(printenv 'INPUT_OUTPUT-DIR' || true)"
+output_name="$(printenv 'INPUT_OUTPUT-NAME' || true)"
+css_file="$(printenv 'INPUT_CSS-FILE' || true)"
+
+[ -n "$output_dir" ] && args+=(--output-dir "$output_dir")
+[ -n "$output_name" ] && args+=(--output-name "$output_name")
+[ -n "$css_file" ] && args+=(--css-file "$css_file")
 
 if [ -z "$INPUT_FILES" ]; then
 	echo "ERROR: 'files' input is required"
