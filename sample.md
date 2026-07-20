@@ -19,8 +19,8 @@ echo "Hello from publish-md-pdf"
 ## Table
 
 | Column A | Column B |
-| --- | --- |
-| foo | bar |
-| baz | qux |
+| -------- | -------- |
+| foo      | bar      |
+| baz      | qux      |
 
 <!-- EOF -->

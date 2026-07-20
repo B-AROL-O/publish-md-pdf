@@ -1,0 +1,7 @@
+# This image is used as a GitHub Docker container action; GitHub Actions requires such
+# containers to run as root to write into the mounted GITHUB_WORKSPACE, so a non-root USER
+# cannot be added (see https://docs.github.com/en/actions/reference/workflows-and-actions/dockerfile-support).
+# Same reasoning as the CKV_DOCKER_3 checkov:skip comment in the Dockerfile.
+AVD-DS-0002
+
+# EOF

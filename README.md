@@ -21,8 +21,8 @@ docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v1 \
 - `--output-name NAME` — filename for the generated PDF (default: derived from the input `.md`
   filename). Only valid when converting a single input file. `.pdf` is appended automatically if not
   already present.
-- `--css-file FILE` — stylesheet to use (default: the image's built-in `publish-md-pdf.css`). A
-  custom stylesheet should keep the `.task-checkbox` rules from the default one (see
+- `--css-file FILE` — style sheet to use (default: the image's built-in `publish-md-pdf.css`). A
+  custom style sheet should keep the `.task-checkbox` rules from the default one (see
   [Notes](#notes)) if the source Markdown has GFM task lists (`- [ ]` / `- [x]`).
 
 Paths outside `$PWD` (a different `--output-dir`, a custom `--css-file`) need their own bind mount,
@@ -37,12 +37,12 @@ since the script only sees paths inside the container.
     output-dir: dist
 ```
 
-| Input | Required | Description |
-| --- | --- | --- |
-| `files` | yes | Space-separated list of Markdown files to convert |
-| `output-dir` | no | Directory to write the PDF(s) into (default: repo root) |
-| `output-name` | no | Filename for the PDF; only valid with a single input file |
-| `css-file` | no | Path to a custom stylesheet, relative to the repo root |
+| Input         | Required | Description                                                   |
+| ------------- | -------- | ------------------------------------------------------------- |
+| `files`       | yes      | Space-separated list of Markdown files to convert             |
+| `output-dir`  | no       | Directory to write the PDF(s) into (default: repository root) |
+| `output-name` | no       | Filename for the PDF; only valid with a single input file     |
+| `css-file`    | no       | Path to a custom style sheet, relative to the repository root |
 
 Uploading or committing the resulting PDF(s) is the consumer's job (e.g. `actions/upload-artifact`).
 
