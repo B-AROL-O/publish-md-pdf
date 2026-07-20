@@ -1,0 +1,42 @@
+---
+name: Build & Test
+
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    name: Build image, smoke test, action self-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Build image
+        run: docker build -t ghcr.io/b-arol-o/publish-md-pdf:v1 .
+
+      - name: Smoke test - render sample.md
+        run: |
+          docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v1 sample.md
+          test -s sample.pdf
+          rm -f sample.pdf
+
+      - name: Action self-test
+        uses: ./
+        with:
+          files: sample.md
+          output-dir: .
+          output-name: sample-via-action
+
+      - name: Verify action self-test output
+        run: |
+          test -s sample-via-action.pdf
+          rm -f sample-via-action.pdf
+
+# EOF
