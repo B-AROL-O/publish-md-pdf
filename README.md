@@ -3,7 +3,7 @@
 Render Markdown files to A4-sized PDF, using [pandoc](https://pandoc.org/) with the
 [WeasyPrint](https://weasyprint.org/) PDF engine. By default, each `<file>.md` is written as
 `<file>.pdf` into the current working directory. It can also convert Markdown to and from Confluence
-Storage Format (the XHTML-based fragment used by the Confluence REST API's `body.storage.value`
+Storage Format (the XHTML-based fragment the Confluence REST API expects in its `body.storage.value`
 field) — see [Converting to/from Confluence](#converting-tofrom-confluence).
 
 Shipped as a container image (`ghcr.io/b-arol-o/publish-md-pdf`) and as a Docker-based GitHub Action,
@@ -53,7 +53,7 @@ Uploading or committing the resulting file(s) is the consumer's job (e.g. `actio
 
 `md-to-confluence.sh` and `confluence-to-md.sh` convert between Markdown and Confluence Storage
 Format as local file transforms — no Confluence server, credentials, or network access is involved.
-The `.confluence` file they read/write is exactly the fragment expected by the Confluence REST API's
+The `.confluence` file they read/write is exactly the fragment the Confluence REST API expects in its
 `body.storage.value` field, so it can be pasted directly into a page create/update request.
 
 ```bash

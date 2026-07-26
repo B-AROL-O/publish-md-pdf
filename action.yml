@@ -7,11 +7,13 @@ branding:
 
 inputs:
   files:
-    description: "Space-separated list of files to convert (glob-expanded by the shell); Markdown for
+    description:
+      "Space-separated list of files to convert (glob-expanded by the shell); Markdown for
       format 'pdf' or 'confluence', Confluence Storage Format (.confluence) for format 'md'"
     required: true
   format:
-    description: "Conversion to perform: 'pdf' (Markdown to PDF), 'confluence' (Markdown to Confluence
+    description:
+      "Conversion to perform: 'pdf' (Markdown to PDF), 'confluence' (Markdown to Confluence
       Storage Format), or 'md' (Confluence Storage Format back to Markdown)"
     required: false
     default: "pdf"

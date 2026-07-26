@@ -15,7 +15,8 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
     && apt-get clean -y \
     && rm -rf /var/lib/apt/lists/*
 
-COPY publish-md-pdf.sh publish-md-pdf.css md-to-confluence.sh confluence-to-md.sh entrypoint.sh /usr/local/bin/
+COPY publish-md-pdf.sh publish-md-pdf.css md-to-confluence.sh confluence-to-md.sh cli-common.sh \
+    entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/publish-md-pdf.sh /usr/local/bin/md-to-confluence.sh \
         /usr/local/bin/confluence-to-md.sh /usr/local/bin/entrypoint.sh
 

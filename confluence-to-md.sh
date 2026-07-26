@@ -16,6 +16,10 @@
 set -e
 # set -x
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=cli-common.sh
+source "$SCRIPT_DIR/cli-common.sh"
+
 usage() {
 	echo "Usage: $0 [--output-dir DIR] [--output-name NAME] <file.confluence> [file2.confluence ...]"
 	echo "Converts each Confluence Storage Format fragment to Markdown."
@@ -79,82 +83,13 @@ restore_code_blocks() {
 	done <"$1"
 }
 
-output_dir="$PWD"
-output_name=""
-
-while [ $# -gt 0 ]; do
-	case "$1" in
-	--output-dir)
-		[ $# -ge 2 ] || {
-			echo "ERROR: --output-dir requires an argument"
-			exit 1
-		}
-		output_dir="$2"
-		shift 2
-		;;
-	--output-name)
-		[ $# -ge 2 ] || {
-			echo "ERROR: --output-name requires an argument"
-			exit 1
-		}
-		output_name="$2"
-		shift 2
-		;;
-	-h | --help)
-		usage
-		exit 0
-		;;
-	--)
-		shift
-		break
-		;;
-	-*)
-		echo "ERROR: Unknown option: $1"
-		usage
-		exit 1
-		;;
-	*)
-		break
-		;;
-	esac
-done
-
-if [ $# -eq 0 ]; then
-	usage
-	exit 1
-fi
-
-if [ -n "$output_name" ] && [ $# -gt 1 ]; then
-	echo "ERROR: --output-name can only be used with a single input file"
-	exit 1
-fi
-
-if ! command -v pandoc >/dev/null 2>&1; then
-	echo "ERROR: 'pandoc' is not installed. Install it with: sudo apt-get install -y pandoc"
-	exit 1
-fi
-
+parse_common_flags "$@"
+require_command pandoc "sudo apt-get install -y pandoc"
 mkdir -p "$output_dir"
 
-for confluence_file in "$@"; do
-	if [ ! -f "$confluence_file" ]; then
-		echo "ERROR: File not found: $confluence_file"
-		exit 1
-	fi
-	if [ "${confluence_file##*.}" != "confluence" ]; then
-		echo "ERROR: Not a Confluence Storage Format (.confluence) file: $confluence_file"
-		exit 1
-	fi
-
-	if [ -n "$output_name" ]; then
-		out_name="$output_name"
-		case "$out_name" in
-		*.md) ;;
-		*) out_name="$out_name.md" ;;
-		esac
-	else
-		out_name="$(basename "${confluence_file%.confluence}").md"
-	fi
+for confluence_file in "${remaining_args[@]}"; do
+	require_file_with_ext "$confluence_file" confluence "Confluence Storage Format (.confluence)"
+	out_name="$(resolve_output_name "$confluence_file" confluence md "$output_name")"
 	out_file="$output_dir/$out_name"
 	tmp_html="$(mktemp --suffix=.html)"
 
