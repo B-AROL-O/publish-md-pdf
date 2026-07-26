@@ -2,7 +2,9 @@
 
 Render Markdown files to A4-sized PDF, using [pandoc](https://pandoc.org/) with the
 [WeasyPrint](https://weasyprint.org/) PDF engine. By default, each `<file>.md` is written as
-`<file>.pdf` into the current working directory.
+`<file>.pdf` into the current working directory. It can also convert Markdown to and from Confluence
+Storage Format (the XHTML-based fragment used by the Confluence REST API's `body.storage.value`
+field) — see [Converting to/from Confluence](#converting-tofrom-confluence).
 
 Shipped as a container image (`ghcr.io/b-arol-o/publish-md-pdf`) and as a Docker-based GitHub Action,
 so it can be used both as a local CLI (via `docker run`) and in CI.
@@ -37,14 +39,56 @@ since the script only sees paths inside the container.
     output-dir: dist
 ```
 
-| Input         | Required | Description                                                   |
-| ------------- | -------- | ------------------------------------------------------------- |
-| `files`       | yes      | Space-separated list of Markdown files to convert             |
-| `output-dir`  | no       | Directory to write the PDF(s) into (default: repository root) |
-| `output-name` | no       | Filename for the PDF; only valid with a single input file     |
-| `css-file`    | no       | Path to a custom style sheet, relative to the repository root |
+| Input         | Required | Description                                                                                                 |
+| ------------- | -------- | ----------------------------------------------------------------------------------------------------------- |
+| `files`       | yes      | Space-separated list of files to convert                                                                    |
+| `format`      | no       | `pdf` (default), `confluence`, or `md` — see [Converting to/from Confluence](#converting-tofrom-confluence) |
+| `output-dir`  | no       | Directory to write the output file(s) into (default: repository root)                                       |
+| `output-name` | no       | Filename for the output; only valid with a single input file                                                |
+| `css-file`    | no       | Path to a custom style sheet, relative to the repository root; only used by `pdf`                           |
 
-Uploading or committing the resulting PDF(s) is the consumer's job (e.g. `actions/upload-artifact`).
+Uploading or committing the resulting file(s) is the consumer's job (e.g. `actions/upload-artifact`).
+
+## Converting to/from Confluence
+
+`md-to-confluence.sh` and `confluence-to-md.sh` convert between Markdown and Confluence Storage
+Format as local file transforms — no Confluence server, credentials, or network access is involved.
+The `.confluence` file they read/write is exactly the fragment expected by the Confluence REST API's
+`body.storage.value` field, so it can be pasted directly into a page create/update request.
+
+```bash
+# Markdown -> Confluence Storage Format
+docker run --rm -v "$PWD:/workspace" --entrypoint /usr/local/bin/md-to-confluence.sh \
+  ghcr.io/b-arol-o/publish-md-pdf:v1 [--output-dir DIR] [--output-name NAME] <file.md> [file2.md ...]
+
+# Confluence Storage Format -> Markdown
+docker run --rm -v "$PWD:/workspace" --entrypoint /usr/local/bin/confluence-to-md.sh \
+  ghcr.io/b-arol-o/publish-md-pdf:v1 [--output-dir DIR] [--output-name NAME] \
+  <file.confluence> [file2.confluence ...]
+```
+
+Or via the GitHub Action, with `format: confluence` or `format: md`:
+
+```yaml
+- uses: B-AROL-O/publish-md-pdf@v1
+  with:
+    files: docs/report.md
+    format: confluence
+```
+
+Known limitations of this conversion (see also [Notes](#notes)):
+
+- Code blocks become Confluence's `code` structured macro, preserving the fenced code block's
+  language; a fenced code block with no language round-trips as an indented code block instead of a
+  fenced one (both are valid Markdown, only the presentation differs).
+- Task-list checkboxes (`- [ ]` / `- [x]`) become the ballot-box characters `☐`/`☒`, since Confluence
+  Storage Format has no native checkbox element and this keeps the content readable as plain text.
+- Other Markdown constructs (headings, tables, links, images, blockquotes, emphasis, nested lists) map
+  onto their closest plain XHTML equivalent. Images become a plain `<img src="...">`, not Confluence's
+  attachment-backed `ac:image` macro, since there's no attachment to point at in a file-only
+  conversion.
+- This only round-trips content produced by these two scripts; storage-format XHTML written by hand or
+  exported from a real Confluence page may use macros or attributes these scripts don't recognize.
 
 ## Building the image locally
 
