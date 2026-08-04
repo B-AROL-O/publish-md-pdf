@@ -11,12 +11,22 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
     && apt-get -qqy install --no-install-recommends \
         pandoc \
         weasyprint \
+        chromium \
+        nodejs \
+        npm \
     && apt-get autoremove -y \
     && apt-get clean -y \
     && rm -rf /var/lib/apt/lists/*
 
+# mermaid-cli (mmdc) renders ```mermaid fenced code blocks to PNG for
+# mermaid-filter.lua (see publish-md-pdf.sh); PUPPETEER_SKIP_DOWNLOAD makes it
+# use the apt-installed Chromium above instead of fetching its own copy.
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+RUN npm install --global --no-audit --no-fund @mermaid-js/mermaid-cli@11.16.0 \
+    && npm cache clean --force
+
 COPY publish-md-pdf.sh publish-md-pdf.css md-to-confluence.sh confluence-to-md.sh cli-common.sh \
-    entrypoint.sh /usr/local/bin/
+    entrypoint.sh mermaid-filter.lua mermaid-puppeteer-config.json /usr/local/bin/
 RUN chmod +x /usr/local/bin/publish-md-pdf.sh /usr/local/bin/md-to-confluence.sh \
         /usr/local/bin/confluence-to-md.sh /usr/local/bin/entrypoint.sh
 

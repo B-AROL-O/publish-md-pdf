@@ -2,9 +2,11 @@
 
 Render Markdown files to A4-sized PDF, using [pandoc](https://pandoc.org/) with the
 [WeasyPrint](https://weasyprint.org/) PDF engine. By default, each `<file>.md` is written as
-`<file>.pdf` into the current working directory. It can also convert Markdown to and from Confluence
-Storage Format (the XHTML-based fragment the Confluence REST API expects in its `body.storage.value`
-field) — see [Converting to/from Confluence](#converting-tofrom-confluence).
+`<file>.pdf` into the current working directory. Fenced ```` ```mermaid ```` code blocks are
+rendered as actual diagrams — see [Rendering Mermaid diagrams](#rendering-mermaid-diagrams). It can
+also convert Markdown to and from Confluence Storage Format (the XHTML-based fragment the Confluence
+REST API expects in its `body.storage.value` field) — see
+[Converting to/from Confluence](#converting-tofrom-confluence).
 
 Shipped as a container image (`ghcr.io/b-arol-o/publish-md-pdf`) and as a Docker-based GitHub Action,
 so it can be used both as a local CLI (via `docker run`) and in CI.
@@ -93,6 +95,34 @@ Known limitations of this conversion (see also [Notes](#notes)):
 For a step-by-step guide to getting the resulting `.confluence` file into a real Confluence Cloud page
 (via the web UI or the REST API), see
 [docs/import-to-confluence-cloud.md](docs/import-to-confluence-cloud.md).
+
+## Rendering Mermaid diagrams
+
+Fenced code blocks with the `mermaid` language (```` ```mermaid ````) are rendered as an actual
+diagram image, not literal diagram source. Rendering runs entirely locally: the image bundles
+[mermaid-cli](https://github.com/mermaid-js/mermaid-cli) (`mmdc`) and a Chromium build for it to
+drive, so diagram source never leaves the container.
+
+````markdown
+```mermaid
+erDiagram
+    acquire_write {
+        int id PK
+    }
+```
+````
+
+Notes and limitations:
+
+- Diagrams are embedded as PNG, not SVG: mermaid-cli's SVG output places labels in
+  `<foreignObject>` (embedded XHTML), which WeasyPrint's SVG renderer doesn't support and leaves
+  every label blank; PNG goes through Chromium's own compositing, so labels always render. This
+  makes diagram text non-selectable in the resulting PDF, unlike the rest of the document.
+- A large or deeply-nested diagram can be taller than one page; it paginates like any other large
+  image or table rather than being scaled down to force a fit.
+- If `mmdc` isn't on `PATH` (e.g. running `publish-md-pdf.sh` directly on a host without it
+  installed, rather than via the Docker image), `mermaid` code blocks fall back to rendering as
+  plain code, matching this tool's behavior before this feature existed.
 
 ## Building the image locally
 

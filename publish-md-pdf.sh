@@ -63,6 +63,21 @@ done
 
 mkdir -p "$output_dir"
 
+# ```mermaid fenced code blocks are rendered as actual diagrams (via
+# mermaid-filter.lua, which shells out to mermaid-cli's `mmdc`) when `mmdc` is
+# available; otherwise they fall back to rendering as plain code, unchanged
+# from before this feature existed.
+pandoc_extra_args=()
+if command -v mmdc >/dev/null 2>&1; then
+	mermaid_tmp_dir="$(mktemp -d)"
+	trap 'rm -rf "$mermaid_tmp_dir"' EXIT
+	export PUBLISH_MD_PDF_MERMAID_TMPDIR="$mermaid_tmp_dir"
+	export PUBLISH_MD_PDF_MERMAID_PUPPETEER_CONFIG="$SCRIPT_DIR/mermaid-puppeteer-config.json"
+	pandoc_extra_args=(--lua-filter="$SCRIPT_DIR/mermaid-filter.lua")
+else
+	echo "INFO: 'mmdc' not found; \`\`\`mermaid code blocks will render as plain code"
+fi
+
 for md_file in "${remaining_args[@]}"; do
 	require_file_with_ext "$md_file" md "Markdown (.md)"
 	pdf_name="$(resolve_output_name "$md_file" md pdf "$output_name")"
@@ -89,6 +104,7 @@ for md_file in "${remaining_args[@]}"; do
 		--no-highlight \
 		--css="$css_file" \
 		--resource-path="$(dirname "$md_file")" \
+		"${pandoc_extra_args[@]}" \
 		-o "$tmp_html" 2>&1); then
 		echo "$pandoc_output"
 		echo "ERROR: pandoc failed to convert $md_file"
