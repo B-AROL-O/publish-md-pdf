@@ -10,7 +10,7 @@ There are two supported paths, depending on how much fidelity you need:
   Some elements (code block language, task checkboxes, internal anchors)
   need manual touch-up afterward.
 - **[Method B — REST API with the `.confluence` file](#method-b--rest-api-with-the-confluence-file)**
-  Byte-for-byte fidelity to the storage-format XHTML this repo generates.
+  Byte-for-byte fidelity to the storage-format XHTML this repository generates.
   Requires an API token and a few `curl` commands, but no manual cleanup.
 
 Confluence Cloud's standard web editor has no built-in way to paste raw
@@ -58,8 +58,8 @@ native blocks.
 
 ### 6. What needs manual touch-up
 
-- **Code block language** — fenced code blocks (```` ```bash ````,
-  ```` ```yaml ````) usually paste as a Code Block macro, but the language
+- **Code block language** — fenced code blocks (` ```bash `,
+  ` ```yaml `) usually paste as a Code Block macro, but the language
   often isn't preserved from plain HTML. Click each code block and set the
   language dropdown manually.
 - **Task list checkboxes** (`- [ ]` / `- [x]`) — these may paste as plain
@@ -85,13 +85,19 @@ for what this conversion does and does not preserve.
 
 ### 1. Get an API token
 
-Create one at <https://id.atlassian.com/manage-profile/security/api-tokens>.
-Requests authenticate as `-u your-email@company.com:API_TOKEN`.
+Create one at <https://id.atlassian.com/manage-profile/security/api-tokens>. Export it as an
+environment variable rather than pasting it into commands directly:
+
+```bash
+export API_TOKEN=your-token-here
+```
+
+Requests below authenticate as `-u your-email@company.com:$API_TOKEN`.
 
 ### 2. Find the target space key
 
 ```bash
-curl -s -u you@company.com:API_TOKEN \
+curl -s -u "you@company.com:$API_TOKEN" \
   "https://yoursite.atlassian.net/wiki/rest/api/space?limit=25" \
   | jq '.results[] | {key, name}'
 ```
@@ -133,7 +139,7 @@ whatever you want the page called.
 ### 5. Create the page
 
 ```bash
-curl -s -u you@company.com:API_TOKEN \
+curl -s -u "you@company.com:$API_TOKEN" \
   -X POST \
   -H "Content-Type: application/json" \
   --data @/tmp/payload.json \
@@ -151,7 +157,7 @@ request is rejected as stale:
 ```bash
 PAGE_ID=123456
 
-CURRENT_VERSION=$(curl -s -u you@company.com:API_TOKEN \
+CURRENT_VERSION=$(curl -s -u "you@company.com:$API_TOKEN" \
   "https://yoursite.atlassian.net/wiki/rest/api/content/$PAGE_ID?expand=version" \
   | jq '.version.number')
 
@@ -163,7 +169,7 @@ jq -n --rawfile body README.confluence --argjson ver $((CURRENT_VERSION + 1)) \
      body: { storage: { value: $body, representation: "storage" } }
    }' > /tmp/payload.json
 
-curl -s -u you@company.com:API_TOKEN \
+curl -s -u "you@company.com:$API_TOKEN" \
   -X PUT \
   -H "Content-Type: application/json" \
   --data @/tmp/payload.json \
@@ -187,11 +193,11 @@ curl -s -u you@company.com:API_TOKEN \
 
 ## Which method should I use?
 
-| | Method A (paste HTML) | Method B (REST API) |
-|---|---|---|
-| Needs API token / credentials | No | Yes |
-| Needs `curl`/`jq` | No | Yes |
-| Code block language preserved | No (manual fix) | Yes |
-| Task checkboxes as native Confluence tasks | No (manual retype) | No (renders as ☐/☒ text — see limitations above) |
-| Internal anchor links preserved | No (manual fix) | Usually, if heading IDs match Confluence's scheme |
-| Good for | Quick one-off page, minor drift OK | Scripted/repeatable imports, exact fidelity |
+|                                            | Method A (paste HTML)              | Method B (REST API)                               |
+| ------------------------------------------ | ---------------------------------- | ------------------------------------------------- |
+| Needs API token / credentials              | No                                 | Yes                                               |
+| Needs `curl`/`jq`                          | No                                 | Yes                                               |
+| Code block language preserved              | No (manual fix)                    | Yes                                               |
+| Task checkboxes as native Confluence tasks | No (manual retype)                 | No (renders as ☐/☒ text — see limitations above)  |
+| Internal anchor links preserved            | No (manual fix)                    | Usually, if heading IDs match Confluence's scheme |
+| Good for                                   | Quick one-off page, minor drift OK | Scripted/repeatable imports, exact fidelity       |
