@@ -1,5 +1,5 @@
 name: "publish-md-pdf"
-description: "Render Markdown files to A4-sized PDF using pandoc + WeasyPrint"
+description: "Render Markdown files to A4-sized PDF, or convert to/from Confluence Storage Format"
 author: "B-AROL-O Team"
 branding:
   icon: "file-text"
@@ -7,18 +7,26 @@ branding:
 
 inputs:
   files:
-    description: "Space-separated list of Markdown files to convert (glob-expanded by the shell)"
+    description:
+      "Space-separated list of files to convert (glob-expanded by the shell); Markdown for
+      format 'pdf' or 'confluence', Confluence Storage Format (.confluence) for format 'md'"
     required: true
+  format:
+    description:
+      "Conversion to perform: 'pdf' (Markdown to PDF), 'confluence' (Markdown to Confluence
+      Storage Format), or 'md' (Confluence Storage Format back to Markdown)"
+    required: false
+    default: "pdf"
   output-dir:
-    description: "Directory to write the PDF(s) into (default: repo root)"
+    description: "Directory to write the output file(s) into (default: repo root)"
     required: false
     default: "."
   output-name:
-    description: "Filename for the PDF; only valid when converting a single input file"
+    description: "Filename for the output; only valid when converting a single input file"
     required: false
     default: ""
   css-file:
-    description: "Stylesheet to use (default: the action's built-in publish-md-pdf.css)"
+    description: "Stylesheet to use with format 'pdf' (default: the action's built-in publish-md-pdf.css)"
     required: false
     default: ""
 

@@ -15,6 +15,8 @@ set -e
 # set -x
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=cli-common.sh
+source "$SCRIPT_DIR/cli-common.sh"
 
 usage() {
 	echo "Usage: $0 [--output-dir DIR] [--output-name NAME] [--css-file FILE] <file.md> [file2.md ...]"
@@ -28,64 +30,27 @@ usage() {
 	echo "                      rules from the default one to render task lists"
 }
 
-output_dir="$PWD"
-output_name=""
 css_file="$SCRIPT_DIR/publish-md-pdf.css"
 
+# --css-file is only used by this script, so pull it out before handing the
+# rest of the flags to the parser shared with md-to-confluence.sh /
+# confluence-to-md.sh.
+remaining=()
 while [ $# -gt 0 ]; do
-	case "$1" in
-	--output-dir)
-		[ $# -ge 2 ] || {
-			echo "ERROR: --output-dir requires an argument"
-			exit 1
-		}
-		output_dir="$2"
-		shift 2
-		;;
-	--output-name)
-		[ $# -ge 2 ] || {
-			echo "ERROR: --output-name requires an argument"
-			exit 1
-		}
-		output_name="$2"
-		shift 2
-		;;
-	--css-file)
+	if [ "$1" = "--css-file" ]; then
 		[ $# -ge 2 ] || {
 			echo "ERROR: --css-file requires an argument"
 			exit 1
 		}
 		css_file="$2"
 		shift 2
-		;;
-	-h | --help)
-		usage
-		exit 0
-		;;
-	--)
+	else
+		remaining+=("$1")
 		shift
-		break
-		;;
-	-*)
-		echo "ERROR: Unknown option: $1"
-		usage
-		exit 1
-		;;
-	*)
-		break
-		;;
-	esac
+	fi
 done
 
-if [ $# -eq 0 ]; then
-	usage
-	exit 1
-fi
-
-if [ -n "$output_name" ] && [ $# -gt 1 ]; then
-	echo "ERROR: --output-name can only be used with a single input file"
-	exit 1
-fi
+parse_common_flags "${remaining[@]}"
 
 if [ ! -f "$css_file" ]; then
 	echo "ERROR: CSS file not found: $css_file"
@@ -93,33 +58,14 @@ if [ ! -f "$css_file" ]; then
 fi
 
 for cmd in pandoc weasyprint; do
-	if ! command -v "$cmd" >/dev/null 2>&1; then
-		echo "ERROR: '$cmd' is not installed. Install it with: sudo apt-get install -y pandoc weasyprint"
-		exit 1
-	fi
+	require_command "$cmd" "sudo apt-get install -y pandoc weasyprint"
 done
 
 mkdir -p "$output_dir"
 
-for md_file in "$@"; do
-	if [ ! -f "$md_file" ]; then
-		echo "ERROR: File not found: $md_file"
-		exit 1
-	fi
-	if [ "${md_file##*.}" != "md" ]; then
-		echo "ERROR: Not a Markdown (.md) file: $md_file"
-		exit 1
-	fi
-
-	if [ -n "$output_name" ]; then
-		pdf_name="$output_name"
-		case "$pdf_name" in
-		*.pdf) ;;
-		*) pdf_name="$pdf_name.pdf" ;;
-		esac
-	else
-		pdf_name="$(basename "${md_file%.md}").pdf"
-	fi
+for md_file in "${remaining_args[@]}"; do
+	require_file_with_ext "$md_file" md "Markdown (.md)"
+	pdf_name="$(resolve_output_name "$md_file" md pdf "$output_name")"
 	pdf_file="$output_dir/$pdf_name"
 	tmp_html="$(mktemp --suffix=.html)"
 

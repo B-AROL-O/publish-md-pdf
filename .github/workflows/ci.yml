@@ -32,6 +32,20 @@ jobs:
           test -s sample.pdf
           rm -f sample.pdf
 
+      - name: Smoke test - convert sample.md to/from Confluence
+        run: |
+          docker run --rm -v "$PWD:/workspace" \
+            --entrypoint /usr/local/bin/md-to-confluence.sh \
+            ghcr.io/b-arol-o/publish-md-pdf:v1 sample.md
+          test -s sample.confluence
+
+          docker run --rm -v "$PWD:/workspace" \
+            --entrypoint /usr/local/bin/confluence-to-md.sh \
+            ghcr.io/b-arol-o/publish-md-pdf:v1 --output-name sample-roundtrip sample.confluence
+          test -s sample-roundtrip.md
+
+          rm -f sample.confluence sample-roundtrip.md
+
       - name: Action self-test
         uses: ./
         with:
@@ -43,5 +57,18 @@ jobs:
         run: |
           test -s sample-via-action.pdf
           rm -f sample-via-action.pdf
+
+      - name: Action self-test - Confluence format
+        uses: ./
+        with:
+          files: sample.md
+          format: confluence
+          output-dir: .
+          output-name: sample-via-action
+
+      - name: Verify action self-test Confluence output
+        run: |
+          test -s sample-via-action.confluence
+          rm -f sample-via-action.confluence
 
 # EOF
