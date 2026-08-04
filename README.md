@@ -90,6 +90,10 @@ Known limitations of this conversion (see also [Notes](#notes)):
 - This only round-trips content produced by these two scripts; storage-format XHTML written by hand or
   exported from a real Confluence page may use macros or attributes these scripts don't recognize.
 
+For a step-by-step guide to getting the resulting `.confluence` file into a real Confluence Cloud page
+(via the web UI or the REST API), see
+[docs/import-to-confluence-cloud.md](docs/import-to-confluence-cloud.md).
+
 ## Building the image locally
 
 ```bash
