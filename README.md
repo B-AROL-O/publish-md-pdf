@@ -2,7 +2,7 @@
 
 Render Markdown files to A4-sized PDF, using [pandoc](https://pandoc.org/) with the
 [WeasyPrint](https://weasyprint.org/) PDF engine. By default, each `<file>.md` is written as
-`<file>.pdf` into the current working directory. Fenced ```` ```mermaid ```` code blocks are
+`<file>.pdf` into the current working directory. Fenced ` ```mermaid ` code blocks are
 rendered as actual diagrams — see [Rendering Mermaid diagrams](#rendering-mermaid-diagrams). It can
 also convert Markdown to and from Confluence Storage Format (the XHTML-based fragment the Confluence
 REST API expects in its `body.storage.value` field) — see
@@ -98,7 +98,7 @@ For a step-by-step guide to getting the resulting `.confluence` file into a real
 
 ## Rendering Mermaid diagrams
 
-Fenced code blocks with the `mermaid` language (```` ```mermaid ````) are rendered as an actual
+Fenced code blocks with the `mermaid` language (` ```mermaid `) are rendered as an actual
 diagram image, not literal diagram source. Rendering runs entirely locally: the image bundles
 [mermaid-cli](https://github.com/mermaid-js/mermaid-cli) (`mmdc`) and a Chromium build for it to
 drive, so diagram source never leaves the container.

@@ -1,4 +1,6 @@
 -- file: mermaid-filter.lua
+-- luacheck: globals CodeBlock
+-- luacheck: read_globals pandoc
 --
 -- Pandoc Lua filter: renders fenced ```mermaid code blocks to PNG images via
 -- mermaid-cli (mmdc), so publish-md-pdf.sh embeds the actual diagram instead
