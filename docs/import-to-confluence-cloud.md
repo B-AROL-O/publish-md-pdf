@@ -30,10 +30,26 @@ understand Confluence-specific macro elements.
 pandoc README.md -o /tmp/readme.html --standalone
 ```
 
+> **Running this inside WSL2?** `/tmp` is inside the Linux filesystem, and a
+> Windows browser can't open `file:///tmp/readme.html` — that path doesn't
+> exist on Windows. Either write the output under your repo checkout (which
+> is already on the Windows-visible `/mnt/c/...` mount), e.g.
+> `pandoc README.md -o "$PWD/readme.html" --standalone`, and then open
+> `C:\path\to\your\repo\readme.html` in the Windows browser; or open
+> `\\wsl.localhost\<distro-name>\tmp\readme.html` in the Windows browser's
+> address bar instead.
+
 ### 2. Open it in a browser and copy everything
 
-Open `/tmp/readme.html` (e.g. `file:///tmp/readme.html`), then select all
-(`Ctrl+A`) and copy (`Ctrl+C`).
+Open the rendered HTML file in a real browser tab and confirm it actually
+**renders** as a formatted page — headings, styled paragraphs, etc. — not
+raw `<tags>` as literal text. If you see literal markup, you're looking at
+the file's source (e.g. via `cat`, a text editor, or a `view-source:` URL)
+rather than the browser-rendered DOM, and copying from there will paste as
+a plain-text code block in Confluence instead of converting to native
+blocks.
+
+Once it's rendering correctly, select all (`Ctrl+A`) and copy (`Ctrl+C`).
 
 ### 3. Create the page in Confluence Cloud
 
