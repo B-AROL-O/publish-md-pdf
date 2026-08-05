@@ -9,6 +9,51 @@ field) — see [Converting to/from Confluence](#converting-tofrom-confluence).
 Shipped as a container image (`ghcr.io/b-arol-o/publish-md-pdf`) and as a Docker-based GitHub Action,
 so it can be used both as a local CLI (via `docker run`) and in CI.
 
+## Architecture
+
+```mermaid
+flowchart TD
+    MD["Markdown file (*.md)"]
+    CONF["Confluence Storage Format file (*.confluence)"]
+
+    CLI["Local CLI<br/>docker run ghcr.io/b-arol-o/publish-md-pdf"]
+    GHA["GitHub Action<br/>uses: B-AROL-O/publish-md-pdf@v1"]
+    GHA --> EP["entrypoint.sh<br/>dispatches on the 'format' input"]
+
+    subgraph IMG["Docker image: ghcr.io/b-arol-o/publish-md-pdf (built on pandoc + WeasyPrint)"]
+        PMD["publish-md-pdf.sh<br/>format: pdf (default)<br/>pandoc md to html5, then WeasyPrint html to pdf"]
+        M2C["md-to-confluence.sh<br/>format: confluence<br/>pandoc md to html5 fragment,<br/>then code/checkbox post-processing"]
+        C2M["confluence-to-md.sh<br/>format: md<br/>reverse post-processing,<br/>then pandoc html to gfm"]
+        COMMON["cli-common.sh<br/>shared flag parsing & file validation"]
+
+        PMD --- COMMON
+        M2C --- COMMON
+        C2M --- COMMON
+    end
+
+    EP --> PMD
+    EP --> M2C
+    EP --> C2M
+    CLI -->|default entrypoint| PMD
+    CLI -.->|"--entrypoint override"| M2C
+    CLI -.->|"--entrypoint override"| C2M
+
+    MD --> PMD
+    MD --> M2C
+    CONF --> C2M
+
+    PMD --> PDF["*.pdf"]
+    M2C --> CONFOUT["*.confluence"]
+    C2M --> MDOUT["*.md"]
+```
+
+Two entry points share one Docker image: a plain `docker run` (which uses `publish-md-pdf.sh` by
+default, or another script via `--entrypoint`), and the GitHub Action, which always goes through
+`entrypoint.sh` and picks a script based on the `format` input. All three scripts share the same
+flag-parsing and file-validation logic in `cli-common.sh`, and all three drive `pandoc` for the
+actual Markdown/HTML conversion — `publish-md-pdf.sh` alone also hands off to WeasyPrint for the
+final HTML-to-PDF render.
+
 ## Usage
 
 ### As a CLI (via Docker)
