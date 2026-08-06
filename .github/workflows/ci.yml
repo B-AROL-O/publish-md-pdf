@@ -32,6 +32,20 @@ jobs:
           test -s sample.pdf
           rm -f sample.pdf
 
+      - name: Smoke test - render sample-mermaid.md (Mermaid diagram)
+        run: |
+          docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v1 sample-mermaid.md
+          test -s sample-mermaid.pdf
+
+      - name: Verify Mermaid diagram was rendered as an image, not literal code
+        run: |
+          sudo apt-get install -y poppler-utils
+          if pdftotext sample-mermaid.pdf - | grep -q "erDiagram"; then
+            echo "ERROR: Mermaid diagram rendered as literal code, not an image"
+            exit 1
+          fi
+          rm -f sample-mermaid.pdf
+
       - name: Smoke test - convert sample.md to/from Confluence
         run: |
           docker run --rm -v "$PWD:/workspace" \
