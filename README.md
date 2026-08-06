@@ -11,23 +11,61 @@ REST API expects in its `body.storage.value` field) — see
 Shipped as a container image (`ghcr.io/b-arol-o/publish-md-pdf`) and as a Docker-based GitHub Action,
 so it can be used both as a local CLI (via `docker run`) and in CI.
 
+## Architecture
+
+Every conversion goes through one entry point, `publish-md-pdf.sh`, and `--format` selects which one
+runs. The GitHub Action reaches the same flags through `entrypoint.sh`, which only translates
+`INPUT_*` environment variables — it makes no routing decisions of its own.
+
+```mermaid
+flowchart TD
+    CLI["Local CLI<br/>docker run ghcr.io/b-arol-o/publish-md-pdf"]
+    GHA["GitHub Action<br/>uses: B-AROL-O/publish-md-pdf@v2"]
+    EP["entrypoint.sh<br/>translates INPUT_* to flags"]
+    MAIN["publish-md-pdf.sh<br/>parses --format, validates input, loops over files"]
+
+    GHA --> EP --> MAIN
+    CLI --> MAIN
+
+    MAIN -->|--format pdf| PDF["lib/convert-pdf.sh<br/>pandoc, then WeasyPrint"]
+    MAIN -->|--format confluence| CONF["lib/convert-confluence.sh<br/>pandoc, then macro post-processing"]
+    MAIN -->|--format md| MD["lib/convert-md.sh<br/>macro pre-processing, then pandoc"]
+
+    PDF --> OUTPDF["file.pdf"]
+    CONF --> OUTCONF["file.confluence"]
+    MD --> OUTMD["file.md"]
+```
+
+`lib/common.sh` holds the helpers every format shares (tool checks, input validation, output-name
+resolution). The conversion modules are sourced, not executed, and each one exposes the same two
+functions — `convert_<format>_init` and `convert_<format>_file` — so adding a format means adding a
+module and one row to the format table in `publish-md-pdf.sh`.
+
 ## Usage
 
 ### As a CLI (via Docker)
 
 ```bash
-docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v1 \
-  [--output-dir DIR] [--output-name NAME] [--css-file FILE] <file.md> [file2.md ...]
+docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+  [--format FORMAT] [--output-dir DIR] [--output-name NAME] [--css-file FILE] <file> [file2 ...]
 ```
 
-- `--output-dir DIR` — directory to write the PDF(s) into (default: `/workspace`, i.e. the mounted
-  `$PWD`). Created if it doesn't already exist.
-- `--output-name NAME` — filename for the generated PDF (default: derived from the input `.md`
-  filename). Only valid when converting a single input file. `.pdf` is appended automatically if not
+- `--format FORMAT` — the conversion to perform (default: `pdf`):
+  - `pdf` — Markdown (`.md`) to A4-sized PDF
+  - `confluence` — Markdown (`.md`) to Confluence Storage Format
+  - `md` — Confluence Storage Format (`.confluence`) back to Markdown
+
+  `--to` is accepted as an alias.
+
+- `--output-dir DIR` — directory to write the output file(s) into (default: `/workspace`, i.e. the
+  mounted `$PWD`). Created if it doesn't already exist.
+- `--output-name NAME` — filename for the output (default: derived from the input filename). Only
+  valid when converting a single input file. The target extension is appended automatically if not
   already present.
-- `--css-file FILE` — style sheet to use (default: the image's built-in `publish-md-pdf.css`). A
-  custom style sheet should keep the `.task-checkbox` rules from the default one (see
-  [Notes](#notes)) if the source Markdown has GFM task lists (`- [ ]` / `- [x]`).
+- `--css-file FILE` — style sheet to use (default: the image's built-in `publish-md-pdf.css`). Only
+  valid with `--format pdf`; combining it with another format is an error. A custom style sheet
+  should keep the `.task-checkbox` rules from the default one (see [Notes](#notes)) if the source
+  Markdown has GFM task lists (`- [ ]` / `- [x]`).
 
 Paths outside `$PWD` (a different `--output-dir`, a custom `--css-file`) need their own bind mount,
 since the script only sees paths inside the container.
@@ -35,7 +73,7 @@ since the script only sees paths inside the container.
 ### As a GitHub Action
 
 ```yaml
-- uses: B-AROL-O/publish-md-pdf@v1
+- uses: B-AROL-O/publish-md-pdf@v2
   with:
     files: docs/report.md
     output-dir: dist
@@ -47,32 +85,31 @@ since the script only sees paths inside the container.
 | `format`      | no       | `pdf` (default), `confluence`, or `md` — see [Converting to/from Confluence](#converting-tofrom-confluence) |
 | `output-dir`  | no       | Directory to write the output file(s) into (default: repository root)                                       |
 | `output-name` | no       | Filename for the output; only valid with a single input file                                                |
-| `css-file`    | no       | Path to a custom style sheet, relative to the repository root; only used by `pdf`                           |
+| `css-file`    | no       | Path to a custom style sheet, relative to the repository root; only valid with `pdf`                        |
 
 Uploading or committing the resulting file(s) is the consumer's job (e.g. `actions/upload-artifact`).
 
 ## Converting to/from Confluence
 
-`md-to-confluence.sh` and `confluence-to-md.sh` convert between Markdown and Confluence Storage
-Format as local file transforms — no Confluence server, credentials, or network access is involved.
-The `.confluence` file they read/write is exactly the fragment the Confluence REST API expects in its
+`--format confluence` and `--format md` convert between Markdown and Confluence Storage Format as
+local file transforms — no Confluence server, credentials, or network access is involved. The
+`.confluence` file they read/write is exactly the fragment the Confluence REST API expects in its
 `body.storage.value` field, so it can be pasted directly into a page create/update request.
 
 ```bash
 # Markdown -> Confluence Storage Format
-docker run --rm -v "$PWD:/workspace" --entrypoint /usr/local/bin/md-to-confluence.sh \
-  ghcr.io/b-arol-o/publish-md-pdf:v1 [--output-dir DIR] [--output-name NAME] <file.md> [file2.md ...]
+docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+  --format confluence [--output-dir DIR] [--output-name NAME] <file.md> [file2.md ...]
 
 # Confluence Storage Format -> Markdown
-docker run --rm -v "$PWD:/workspace" --entrypoint /usr/local/bin/confluence-to-md.sh \
-  ghcr.io/b-arol-o/publish-md-pdf:v1 [--output-dir DIR] [--output-name NAME] \
-  <file.confluence> [file2.confluence ...]
+docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+  --format md [--output-dir DIR] [--output-name NAME] <file.confluence> [file2.confluence ...]
 ```
 
 Or via the GitHub Action, with `format: confluence` or `format: md`:
 
 ```yaml
-- uses: B-AROL-O/publish-md-pdf@v1
+- uses: B-AROL-O/publish-md-pdf@v2
   with:
     files: docs/report.md
     format: confluence
@@ -89,8 +126,8 @@ Known limitations of this conversion (see also [Notes](#notes)):
   onto their closest plain XHTML equivalent. Images become a plain `<img src="...">`, not Confluence's
   attachment-backed `ac:image` macro, since there's no attachment to point at in a file-only
   conversion.
-- This only round-trips content produced by these two scripts; storage-format XHTML written by hand or
-  exported from a real Confluence page may use macros or attributes these scripts don't recognize.
+- This only round-trips content produced by these two conversions; storage-format XHTML written by
+  hand or exported from a real Confluence page may use macros or attributes they don't recognize.
 
 For a step-by-step guide to getting the resulting `.confluence` file into a real Confluence Cloud page
 (via the web UI or the REST API), see
@@ -123,6 +160,25 @@ Notes and limitations:
 - If `mmdc` isn't on `PATH` (e.g. running `publish-md-pdf.sh` directly on a host without it
   installed, rather than via the Docker image), `mermaid` code blocks fall back to rendering as
   plain code, matching this tool's behavior before this feature existed.
+
+## Migrating from v1
+
+v2 replaced the two secondary entry-point scripts with a `--format` flag, so there is exactly one
+way to choose a conversion whether you use the CLI or the Action.
+
+| v1                                                                                   | v2                                               |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------ |
+| `docker run … IMAGE file.md`                                                         | unchanged                                        |
+| `docker run … --entrypoint /usr/local/bin/md-to-confluence.sh IMAGE file.md`         | `docker run … IMAGE --format confluence file.md` |
+| `docker run … --entrypoint /usr/local/bin/confluence-to-md.sh IMAGE file.confluence` | `docker run … IMAGE --format md file.confluence` |
+| Action `with: { format: … }`                                                         | unchanged                                        |
+
+The two `--entrypoint` paths still work in v2 but print a deprecation warning on stderr; they will
+be removed in v3.0.0. Everything else — the default `pdf` behaviour, all flag names, and every
+Action input — is unchanged, so most users need to change nothing.
+
+One behaviour did tighten: `--css-file` combined with a non-`pdf` format is now an error rather than
+being silently ignored.
 
 ## Building the image locally
 

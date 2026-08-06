@@ -1,6 +1,6 @@
 # Importing a `.confluence` (or `.md`) file into Confluence Cloud
 
-This HOWTO covers how to get the output of `md-to-confluence.sh` — or the
+This HOWTO covers how to get the output of `--format confluence` — or the
 source `.md` it was generated from — into a real Confluence Cloud page.
 
 There are two supported paths, depending on how much fidelity you need:
@@ -93,7 +93,7 @@ acceptable.
 
 ## Method B — REST API with the `.confluence` file
 
-This sends the storage-format XHTML from `md-to-confluence.sh` verbatim, so
+This sends the storage-format XHTML from `--format confluence` verbatim, so
 there's no drift: code blocks stay as `ac:structured-macro` code macros,
 task-list ballot-box characters (`☐`/`☒`) come through as-is, etc. See the
 [main README's Converting to/from Confluence section](../README.md#converting-tofrom-confluence)
@@ -122,8 +122,8 @@ curl -s -u "you@company.com:$API_TOKEN" \
 
 ```bash
 docker run --rm -v "$PWD:/workspace" \
-  --entrypoint /usr/local/bin/md-to-confluence.sh \
-  ghcr.io/b-arol-o/publish-md-pdf:v1 \
+  ghcr.io/b-arol-o/publish-md-pdf:v2 \
+  --format confluence \
   README.md
 ```
 
@@ -202,9 +202,9 @@ curl -s -u "you@company.com:$API_TOKEN" \
 - A fenced code block with no language round-trips as an indented code
   block instead of a fenced one; this only affects presentation, not
   correctness.
-- This only round-trips content produced by `md-to-confluence.sh` /
-  `confluence-to-md.sh` — storage-format XHTML written by hand or exported
-  from a real Confluence page may use macros or attributes these scripts
+- This only round-trips content produced by `--format confluence` /
+  `--format md` — storage-format XHTML written by hand or exported from a
+  real Confluence page may use macros or attributes these conversions
   don't recognize.
 
 ## Which method should I use?
