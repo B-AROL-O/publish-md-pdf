@@ -1,9 +1,10 @@
 #!/bin/bash
 # ==========================================================
-# Conversion module: Markdown -> A4-sized PDF, via pandoc + WeasyPrint.
+# Conversion module: Markdown -> A4-sized PDF,
+# via pandoc + WeasyPrint.
 #
-# Sourced by publish-md-pdf.sh; not meant to be run directly. Reads
-# $css_file and $SCRIPT_DIR from the caller.
+# Sourced by publish-md-pdf.sh; not meant to be run directly.
+# Reads $css_file and $SCRIPT_DIR from the caller.
 # ==========================================================
 
 # One-time setup: verify the tools this format needs, and decide whether
