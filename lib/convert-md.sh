@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==========================================================
-# Conversion module: Confluence Storage Format -> Markdown. The reverse of
-# lib/convert-confluence.sh.
+# Conversion module: Confluence Storage Format -> Markdown.
+# The reverse of lib/convert-confluence.sh.
 #
 # Sourced by publish-md-pdf.sh; not meant to be run directly.
 # ==========================================================
