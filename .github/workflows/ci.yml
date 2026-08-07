@@ -23,18 +23,21 @@ jobs:
         with:
           persist-credentials: false
 
+      # Tagged to match runs.image in action.yml, so the "Action self-test"
+      # steps below resolve to this locally built image instead of pulling
+      # the published one.
       - name: Build image
-        run: docker build -t ghcr.io/b-arol-o/publish-md-pdf:v1 .
+        run: docker build -t ghcr.io/b-arol-o/publish-md-pdf:v2 .
 
-      - name: Smoke test - render sample.md
+      - name: Smoke test - render sample.md (default format)
         run: |
-          docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v1 sample.md
+          docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 sample.md
           test -s sample.pdf
           rm -f sample.pdf
 
       - name: Smoke test - render sample-mermaid.md (Mermaid diagram)
         run: |
-          docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v1 sample-mermaid.md
+          docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 sample-mermaid.md
           test -s sample-mermaid.pdf
 
       - name: Verify Mermaid diagram was rendered as an image, not literal code
@@ -46,19 +49,56 @@ jobs:
           fi
           rm -f sample-mermaid.pdf
 
-      - name: Smoke test - convert sample.md to/from Confluence
+      - name: Smoke test - convert sample.md to/from Confluence via --format
+        run: |
+          docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+            --format confluence sample.md
+          test -s sample.confluence
+
+          docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+            --format md --output-name sample-roundtrip sample.confluence
+          test -s sample-roundtrip.md
+
+          rm -f sample.confluence sample-roundtrip.md
+
+      - name: Verify --css-file is rejected with a non-pdf format
+        run: |
+          if docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+            --format confluence --css-file publish-md-pdf.css sample.md; then
+            echo "ERROR: --css-file with --format confluence should have failed"
+            exit 1
+          fi
+
+      - name: Verify an unknown --format is rejected
+        run: |
+          if docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+            --format bogus sample.md; then
+            echo "ERROR: an unknown --format should have failed"
+            exit 1
+          fi
+
+      # The v1 --entrypoint invocations must keep working until v3.0.0.
+      - name: Verify deprecated v1 entrypoint shims still work
         run: |
           docker run --rm -v "$PWD:/workspace" \
             --entrypoint /usr/local/bin/md-to-confluence.sh \
-            ghcr.io/b-arol-o/publish-md-pdf:v1 sample.md
+            ghcr.io/b-arol-o/publish-md-pdf:v2 sample.md
           test -s sample.confluence
 
           docker run --rm -v "$PWD:/workspace" \
             --entrypoint /usr/local/bin/confluence-to-md.sh \
-            ghcr.io/b-arol-o/publish-md-pdf:v1 --output-name sample-roundtrip sample.confluence
+            ghcr.io/b-arol-o/publish-md-pdf:v2 --output-name sample-roundtrip sample.confluence
           test -s sample-roundtrip.md
 
           rm -f sample.confluence sample-roundtrip.md
+
+      - name: Verify the deprecation shims warn on stderr
+        run: |
+          docker run --rm -v "$PWD:/workspace" \
+            --entrypoint /usr/local/bin/md-to-confluence.sh \
+            ghcr.io/b-arol-o/publish-md-pdf:v2 sample.md 2>shim-stderr.txt
+          grep -q "deprecated" shim-stderr.txt
+          rm -f sample.confluence shim-stderr.txt
 
       - name: Action self-test
         uses: ./

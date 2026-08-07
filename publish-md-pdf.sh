@@ -1,133 +1,150 @@
 #!/bin/bash
 # ==========================================================
-# Publish one or more Markdown files as A4-sized PDF
+# Convert Markdown to A4-sized PDF or Confluence Storage Format, and
+# Confluence Storage Format back to Markdown.
 #
-# Requires: pandoc, weasyprint
+# This is the single entry point for every conversion this tool performs;
+# --format selects which one. The GitHub Action reaches the same flags via
+# entrypoint.sh, which only translates INPUT_* environment variables.
+#
+# Requires: pandoc (all formats), weasyprint (--format pdf only)
 #   sudo apt-get install -y pandoc weasyprint
-#
-# Usage: scripts/publish-md-pdf.sh [--output-dir DIR] [--output-name NAME] [--css-file FILE] <file.md> [file2.md ...]
-# By default each <file>.md is rendered to <file>.pdf in $PWD; use --output-dir
-# and/or --output-name to write elsewhere or under a different name. Use
-# --css-file to use a different stylesheet than publish-md-pdf.css.
 # ==========================================================
 
 set -e
 # set -x
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=cli-common.sh
-source "$SCRIPT_DIR/cli-common.sh"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/convert-pdf.sh
+source "$SCRIPT_DIR/lib/convert-pdf.sh"
+# shellcheck source=lib/convert-confluence.sh
+source "$SCRIPT_DIR/lib/convert-confluence.sh"
+# shellcheck source=lib/convert-md.sh
+source "$SCRIPT_DIR/lib/convert-md.sh"
 
 usage() {
-	echo "Usage: $0 [--output-dir DIR] [--output-name NAME] [--css-file FILE] <file.md> [file2.md ...]"
-	echo "Converts each Markdown file to an A4-sized PDF."
+	echo "Usage: $0 [--format FORMAT] [--output-dir DIR] [--output-name NAME] [--css-file FILE] <file> [file2 ...]"
+	echo "Converts each input file to the requested FORMAT."
 	echo
-	echo "  --output-dir DIR    Directory to write the PDF(s) into (default: \$PWD)"
-	echo "  --output-name NAME  Filename for the PDF (default: <file>.pdf); only"
-	echo "                      valid when converting a single input file"
-	echo "  --css-file FILE     Stylesheet to use (default: publish-md-pdf.css); a"
-	echo "                      custom stylesheet should keep the .task-checkbox"
-	echo "                      rules from the default one to render task lists"
+	echo "  --format FORMAT     Conversion to perform (default: pdf):"
+	echo "                        pdf         Markdown (.md) to A4-sized PDF"
+	echo "                        confluence  Markdown (.md) to Confluence Storage Format"
+	echo "                        md          Confluence Storage Format to Markdown"
+	echo "                      --to is accepted as an alias for --format."
+	echo "  --output-dir DIR    Directory to write the output file(s) into (default: \$PWD)"
+	echo "  --output-name NAME  Filename for the output (default: derived from the input"
+	echo "                      filename); only valid when converting a single input file"
+	echo "  --css-file FILE     Stylesheet to use (default: publish-md-pdf.css); only valid"
+	echo "                      with --format pdf. A custom stylesheet should keep the"
+	echo "                      .task-checkbox rules from the default one to render task lists"
 }
 
+format="pdf"
+output_dir="$PWD"
+output_name=""
 css_file="$SCRIPT_DIR/publish-md-pdf.css"
+css_file_given=0
 
-# --css-file is only used by this script, so pull it out before handing the
-# rest of the flags to the parser shared with md-to-confluence.sh /
-# confluence-to-md.sh.
-remaining=()
+require_argument() {
+	[ "$2" -ge 2 ] || {
+		echo "ERROR: $1 requires an argument"
+		exit 1
+	}
+}
+
 while [ $# -gt 0 ]; do
-	if [ "$1" = "--css-file" ]; then
-		[ $# -ge 2 ] || {
-			echo "ERROR: --css-file requires an argument"
-			exit 1
-		}
-		css_file="$2"
+	case "$1" in
+	--format | --to)
+		require_argument "$1" $#
+		format="$2"
 		shift 2
-	else
-		remaining+=("$1")
+		;;
+	--output-dir)
+		require_argument "$1" $#
+		output_dir="$2"
+		shift 2
+		;;
+	--output-name)
+		require_argument "$1" $#
+		output_name="$2"
+		shift 2
+		;;
+	--css-file)
+		require_argument "$1" $#
+		css_file="$2"
+		css_file_given=1
+		shift 2
+		;;
+	-h | --help)
+		usage
+		exit 0
+		;;
+	--)
 		shift
-	fi
+		break
+		;;
+	-*)
+		echo "ERROR: Unknown option: $1"
+		usage
+		exit 1
+		;;
+	*)
+		break
+		;;
+	esac
 done
 
-parse_common_flags "${remaining[@]}"
+# Each format declares what it consumes and what it produces, so the
+# conversion loop below stays format-agnostic.
+case "$format" in
+pdf)
+	src_ext="md"
+	src_label="Markdown (.md)"
+	dst_ext="pdf"
+	;;
+confluence)
+	src_ext="md"
+	src_label="Markdown (.md)"
+	dst_ext="confluence"
+	;;
+md)
+	src_ext="confluence"
+	src_label="Confluence Storage Format (.confluence)"
+	dst_ext="md"
+	;;
+*)
+	echo "ERROR: Unknown --format: '$format' (expected pdf, confluence, or md)"
+	usage
+	exit 1
+	;;
+esac
 
-if [ ! -f "$css_file" ]; then
-	echo "ERROR: CSS file not found: $css_file"
+if [ $# -eq 0 ]; then
+	usage
+	exit 1
+fi
+if [ -n "$output_name" ] && [ $# -gt 1 ]; then
+	echo "ERROR: --output-name can only be used with a single input file"
+	exit 1
+fi
+if [ "$css_file_given" -eq 1 ] && [ "$format" != "pdf" ]; then
+	echo "ERROR: --css-file is only valid with --format pdf (got --format $format)"
 	exit 1
 fi
 
-for cmd in pandoc weasyprint; do
-	require_command "$cmd" "sudo apt-get install -y pandoc weasyprint"
-done
-
 mkdir -p "$output_dir"
+"convert_${format}_init"
 
-# ```mermaid fenced code blocks are rendered as actual diagrams (via
-# mermaid-filter.lua, which shells out to mermaid-cli's `mmdc`) when `mmdc` is
-# available; otherwise they fall back to rendering as plain code, unchanged
-# from before this feature existed.
-pandoc_extra_args=()
-if command -v mmdc >/dev/null 2>&1; then
-	mermaid_tmp_dir="$(mktemp -d)"
-	trap 'rm -rf "$mermaid_tmp_dir"' EXIT
-	export PUBLISH_MD_PDF_MERMAID_TMPDIR="$mermaid_tmp_dir"
-	export PUBLISH_MD_PDF_MERMAID_PUPPETEER_CONFIG="$SCRIPT_DIR/mermaid-puppeteer-config.json"
-	pandoc_extra_args=(--lua-filter="$SCRIPT_DIR/mermaid-filter.lua")
-else
-	echo "INFO: 'mmdc' not found; \`\`\`mermaid code blocks will render as plain code"
-fi
+for input_file in "$@"; do
+	require_file_with_ext "$input_file" "$src_ext" "$src_label"
+	out_name="$(resolve_output_name "$input_file" "$src_ext" "$dst_ext" "$output_name")"
+	out_file="$output_dir/$out_name"
 
-for md_file in "${remaining_args[@]}"; do
-	require_file_with_ext "$md_file" md "Markdown (.md)"
-	pdf_name="$(resolve_output_name "$md_file" md pdf "$output_name")"
-	pdf_file="$output_dir/$pdf_name"
-	tmp_html="$(mktemp --suffix=.html)"
-
-	echo "INFO: Converting $md_file -> $pdf_file"
-
-	# pandoc renders GFM task-list checkboxes as native <input type="checkbox">
-	# elements, whose checked/unchecked appearance WeasyPrint cannot restyle
-	# (it always fills a checked box solid black). Render to HTML first, then
-	# swap those inputs for <span> markers styled by publish-md-pdf.css.
-	#
-	# --no-highlight disables pandoc's syntax highlighting. Its default
-	# highlighting CSS gives each code line a hanging indent
-	# (text-indent: -5em; padding-left: 5em) that browsers cancel to zero but
-	# WeasyPrint does not, leaving every code line shoved ~5em to the right.
-	# Disabling it renders plain <pre><code>, matching the VS Code preview.
-	if ! pandoc_output=$(pandoc "$md_file" \
-		--from=gfm \
-		--to=html5 \
-		--standalone \
-		--wrap=none \
-		--no-highlight \
-		--css="$css_file" \
-		--resource-path="$(dirname "$md_file")" \
-		"${pandoc_extra_args[@]}" \
-		-o "$tmp_html" 2>&1); then
-		echo "$pandoc_output"
-		echo "ERROR: pandoc failed to convert $md_file"
-		rm -f "$tmp_html"
-		exit 1
-	fi
-	echo "$pandoc_output" | grep -v "Defaulting to .* as the title\|To specify a title," || true
-
-	sed -i \
-		-e 's/<input type="checkbox" checked="" \/>/<span class="task-checkbox checked"><\/span>/g' \
-		-e 's/<input type="checkbox" \/>/<span class="task-checkbox"><\/span>/g' \
-		"$tmp_html"
-
-	if ! weasyprint_output=$(weasyprint "$tmp_html" "$pdf_file" \
-		--base-url "$(dirname "$md_file")" 2>&1); then
-		echo "$weasyprint_output"
-		echo "ERROR: weasyprint failed to render $md_file"
-		rm -f "$tmp_html"
-		exit 1
-	fi
-
-	rm -f "$tmp_html"
-	echo "INFO: Wrote $pdf_file ($(du -h "$pdf_file" | cut -f1))"
+	echo "INFO: Converting $input_file -> $out_file"
+	"convert_${format}_file" "$input_file" "$out_file"
+	echo "INFO: Wrote $out_file ($(du -h "$out_file" | cut -f1))"
 done
 
 # EOF

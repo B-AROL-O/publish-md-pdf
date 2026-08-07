@@ -26,13 +26,15 @@ inputs:
     required: false
     default: ""
   css-file:
-    description: "Stylesheet to use with format 'pdf' (default: the action's built-in publish-md-pdf.css)"
+    description:
+      "Stylesheet to use (default: the action's built-in publish-md-pdf.css). Only valid with
+      format 'pdf'; combining it with another format is an error"
     required: false
     default: ""
 
 runs:
   using: "docker"
-  image: "docker://ghcr.io/b-arol-o/publish-md-pdf:v1"
+  image: "docker://ghcr.io/b-arol-o/publish-md-pdf:v2"
   entrypoint: "/usr/local/bin/entrypoint.sh"
 
 # EOF
