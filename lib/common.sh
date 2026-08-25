@@ -4,6 +4,31 @@
 # Meant to be sourced, not run directly.
 # ==========================================================
 
+# A script may only install one EXIT trap — a second `trap ... EXIT`
+# silently replaces the first rather than adding to it. Every module that
+# needs a temp file/dir removed registers it here instead of installing its
+# own trap.
+_cleanup_paths=()
+
+register_cleanup() {
+	_cleanup_paths+=("$1")
+}
+
+_run_cleanup() {
+	local path
+	for path in "${_cleanup_paths[@]}"; do
+		rm -rf "$path"
+	done
+}
+trap _run_cleanup EXIT
+
+is_url() {
+	case "$1" in
+	http://* | https://*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
 require_command() {
 	local cmd="$1" hint="$2"
 	if ! command -v "$cmd" >/dev/null 2>&1; then

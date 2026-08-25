@@ -6,7 +6,9 @@ Render Markdown files to A4-sized PDF, using [pandoc](https://pandoc.org/) with 
 rendered as actual diagrams — see [Rendering Mermaid diagrams](#rendering-mermaid-diagrams). It can
 also convert Markdown to and from Confluence Storage Format (the XHTML-based fragment the Confluence
 REST API expects in its `body.storage.value` field) — see
-[Converting to/from Confluence](#converting-tofrom-confluence).
+[Converting to/from Confluence](#converting-tofrom-confluence) — and import a Confluence Cloud page
+directly from its URL — see
+[Importing a Confluence page by URL](#importing-a-confluence-page-by-url).
 
 Shipped as a container image (`ghcr.io/b-arol-o/publish-md-pdf`) and as a Docker-based GitHub Action,
 so it can be used both as a local CLI (via `docker run`) and in CI.
@@ -22,10 +24,12 @@ flowchart TD
     CLI["Local CLI<br/>docker run ghcr.io/b-arol-o/publish-md-pdf"]
     GHA["GitHub Action<br/>uses: B-AROL-O/publish-md-pdf@v2"]
     EP["entrypoint.sh<br/>translates INPUT_* to flags"]
-    MAIN["publish-md-pdf.sh<br/>parses --format, validates input, loops over files"]
+    MAIN["publish-md-pdf.sh<br/>parses --format, validates input, loops over files/URLs"]
+    FETCH["lib/fetch-confluence.sh<br/>REST API, given a page URL"]
 
     GHA --> EP --> MAIN
     CLI --> MAIN
+    MAIN -->|input is a URL| FETCH --> MAIN
 
     MAIN -->|--format pdf| PDF["lib/convert-pdf.sh<br/>pandoc, then WeasyPrint"]
     MAIN -->|--format confluence| CONF["lib/convert-confluence.sh<br/>pandoc, then macro post-processing"]
@@ -39,7 +43,9 @@ flowchart TD
 `lib/common.sh` holds the helpers every format shares (tool checks, input validation, output-name
 resolution). The conversion modules are sourced, not executed, and each one exposes the same two
 functions — `convert_<format>_init` and `convert_<format>_file` — so adding a format means adding a
-module and one row to the format table in `publish-md-pdf.sh`.
+module and one row to the format table in `publish-md-pdf.sh`. `lib/fetch-confluence.sh` sits
+alongside them and is only invoked when an input is a URL — see
+[Importing a Confluence page by URL](#importing-a-confluence-page-by-url).
 
 ## Usage
 
@@ -47,10 +53,11 @@ module and one row to the format table in `publish-md-pdf.sh`.
 
 ```bash
 docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
-  [--format FORMAT] [--output-dir DIR] [--output-name NAME] [--css-file FILE] <file> [file2 ...]
+  [--format FORMAT] [--output-dir DIR] [--output-name NAME] [--css-file FILE] <file|url> [file2|url2 ...]
 ```
 
-- `--format FORMAT` — the conversion to perform (default: `pdf`):
+- `--format FORMAT` — the conversion to perform (default: `pdf`, or `md` if every input is a URL —
+  see [Importing a Confluence page by URL](#importing-a-confluence-page-by-url)):
   - `pdf` — Markdown (`.md`) to A4-sized PDF
   - `confluence` — Markdown (`.md`) to Confluence Storage Format
   - `md` — Confluence Storage Format (`.confluence`) back to Markdown
@@ -59,9 +66,9 @@ docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
 
 - `--output-dir DIR` — directory to write the output file(s) into (default: `/workspace`, i.e. the
   mounted `$PWD`). Created if it doesn't already exist.
-- `--output-name NAME` — filename for the output (default: derived from the input filename). Only
-  valid when converting a single input file. The target extension is appended automatically if not
-  already present.
+- `--output-name NAME` — filename for the output (default: derived from the input filename, or from
+  the page title for a fetched Confluence URL). Only valid when converting a single input. The
+  target extension is appended automatically if not already present.
 - `--css-file FILE` — style sheet to use (default: the image's built-in `publish-md-pdf.css`). Only
   valid with `--format pdf`; combining it with another format is an error. A custom style sheet
   should keep the `.task-checkbox` rules from the default one (see [Notes](#notes)) if the source
@@ -69,6 +76,9 @@ docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
 
 Paths outside `$PWD` (a different `--output-dir`, a custom `--css-file`) need their own bind mount,
 since the script only sees paths inside the container.
+
+An input starting with `http://` or `https://` is fetched as a Confluence Cloud page instead of
+being read as a file — see [Importing a Confluence page by URL](#importing-a-confluence-page-by-url).
 
 ### As a GitHub Action
 
@@ -81,13 +91,15 @@ since the script only sees paths inside the container.
 
 | Input         | Required | Description                                                                                                 |
 | ------------- | -------- | ----------------------------------------------------------------------------------------------------------- |
-| `files`       | yes      | Space-separated list of files to convert                                                                    |
+| `files`       | yes      | Space-separated list of files and/or Confluence Cloud page URLs to convert                                  |
 | `format`      | no       | `pdf` (default), `confluence`, or `md` — see [Converting to/from Confluence](#converting-tofrom-confluence) |
 | `output-dir`  | no       | Directory to write the output file(s) into (default: repository root)                                       |
-| `output-name` | no       | Filename for the output; only valid with a single input file                                                |
+| `output-name` | no       | Filename for the output; only valid with a single input                                                     |
 | `css-file`    | no       | Path to a custom style sheet, relative to the repository root; only valid with `pdf`                        |
 
 Uploading or committing the resulting file(s) is the consumer's job (e.g. `actions/upload-artifact`).
+A URL input needs `CONFLUENCE_EMAIL` and `CONFLUENCE_API_TOKEN` set via the step's `env:` — see
+[Importing a Confluence page by URL](#importing-a-confluence-page-by-url).
 
 ## Converting to/from Confluence
 
@@ -132,6 +144,86 @@ Known limitations of this conversion (see also [Notes](#notes)):
 For a step-by-step guide to getting the resulting `.confluence` file into a real Confluence Cloud page
 (via the web UI or the REST API), see
 [docs/import-to-confluence-cloud.md](docs/import-to-confluence-cloud.md).
+
+## Importing a Confluence page by URL
+
+Any input starting with `http://` or `https://` is fetched from Confluence Cloud's REST API instead
+of being read as a file, and converted the same way a local `.confluence` file would be. This covers
+tiny links, the current UI's `.../spaces/KEY/pages/<id>/Title` URLs, `?pageId=<id>` URLs, and legacy
+`.../display/KEY/Title` URLs — Confluence Cloud only (Server/Data Center isn't supported).
+
+```bash
+# Fetch and convert to Markdown (the default --format when every input is a URL)
+docker run --rm -v "$PWD:/workspace" \
+  -e CONFLUENCE_EMAIL -e CONFLUENCE_API_TOKEN \
+  ghcr.io/b-arol-o/publish-md-pdf:v2 \
+  https://yoursite.atlassian.net/wiki/x/AYAJ4
+
+# Fetch and render straight to PDF
+docker run --rm -v "$PWD:/workspace" \
+  -e CONFLUENCE_EMAIL -e CONFLUENCE_API_TOKEN \
+  ghcr.io/b-arol-o/publish-md-pdf:v2 \
+  --format pdf https://yoursite.atlassian.net/wiki/x/AYAJ4
+
+# Save the raw Confluence Storage Format body instead
+docker run --rm -v "$PWD:/workspace" \
+  -e CONFLUENCE_EMAIL -e CONFLUENCE_API_TOKEN \
+  ghcr.io/b-arol-o/publish-md-pdf:v2 \
+  --format confluence https://yoursite.atlassian.net/wiki/x/AYAJ4
+```
+
+Or via the GitHub Action, with `files:` set to the page URL and the credentials passed through the
+step's `env:` (never as a plain `with:` input, since those are more prone to appearing in logs):
+
+```yaml
+- uses: B-AROL-O/publish-md-pdf@v2
+  with:
+    files: https://yoursite.atlassian.net/wiki/x/AYAJ4
+    format: pdf
+  env:
+    CONFLUENCE_EMAIL: ${{ vars.CONFLUENCE_EMAIL }}
+    CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN }}
+```
+
+See [docs/confluence-authentication.md](docs/confluence-authentication.md) for how to find your
+account email and create the API token.
+
+Without `--format`, a URL input defaults to `md` rather than `pdf` — a fetched page's native format
+is Confluence Storage Format, so converting it to Markdown is the more directly useful default. Mix
+a URL with a `.md`/`.confluence` file in the same invocation and the default reverts to `pdf`
+(matching that file input), with the URL fetched and bridged through Markdown on the way there. Pass
+`--format` explicitly to avoid relying on this rule.
+
+The fetched Markdown gets YAML front matter this tool wouldn't otherwise add, since the storage body
+carries no title of its own:
+
+```yaml
+---
+title: "Quarterly Report"
+source_url: "https://yoursite.atlassian.net/wiki/x/AYAJ4"
+confluence_page_id: "123456789"
+confluence_version: 19
+---
+```
+
+`--output-name` still overrides the default output name (otherwise derived from the page title);
+`title:` also becomes the PDF's document title per [Notes](#notes).
+
+Credentials are read only from `CONFLUENCE_EMAIL` and `CONFLUENCE_API_TOKEN` (Confluence Cloud's own
+Basic-auth scheme — see [docs/confluence-authentication.md](docs/confluence-authentication.md)).
+Sending them over plain HTTP is refused unless `PUBLISH_MD_PDF_ALLOW_INSECURE=1` is set (intended for
+a local test server, not real use).
+
+Known limitations, beyond those already listed for [Converting to/from
+Confluence](#converting-tofrom-confluence) — real Confluence pages use macros this tool's storage-to-Markdown
+conversion has never had to handle:
+
+- `ac:image` / `ri:attachment` (images) — attachments aren't downloaded, so image references won't
+  resolve.
+- `ac:link` / `ri:page` (internal links to other Confluence pages).
+- `ac:task-list` — doesn't become GFM `- [ ]` / `- [x]` task-list syntax.
+- Info/note/warning panels, `ac:layout`, page properties, and structured macros other than `code`
+  generally.
 
 ## Rendering Mermaid diagrams
 

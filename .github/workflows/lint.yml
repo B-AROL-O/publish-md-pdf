@@ -3,7 +3,7 @@ name: Lint Code Base
 
 on:
   push:
-    branches-ignore: [main]
+    branches: [main]
   pull_request:
     branches: [main]
 
@@ -30,5 +30,11 @@ jobs:
           VALIDATE_ALL_CODEBASE: true
           DEFAULT_BRANCH: main
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # .claude/ holds terse, machine-oriented agent notes (frontmatter + short
+          # bullets), not prose documentation, so heading/terminology rules meant for
+          # human-facing docs don't apply. CLAUDE.md is a symlink to AGENTS.md, whose
+          # target super-linter already lints under its own name — excluding the
+          # symlink avoids double-reporting the same lines under two file names.
+          FILTER_REGEX_EXCLUDE: ".claude/.*|^CLAUDE.md$"
 
 # EOF

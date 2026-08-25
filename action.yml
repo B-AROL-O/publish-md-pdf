@@ -8,8 +8,11 @@ branding:
 inputs:
   files:
     description:
-      "Space-separated list of files to convert (glob-expanded by the shell); Markdown for
-      format 'pdf' or 'confluence', Confluence Storage Format (.confluence) for format 'md'"
+      "Space-separated list of files and/or Confluence Cloud page URLs to convert
+      (files are glob-expanded by the shell); Markdown for format 'pdf' or 'confluence',
+      Confluence Storage Format (.confluence) for format 'md'. A URL is fetched via the
+      REST API (see docs/confluence-authentication.md for the required CONFLUENCE_EMAIL
+      and CONFLUENCE_API_TOKEN env vars) instead of read as a file."
     required: true
   format:
     description:
