@@ -54,7 +54,7 @@ conversion. The GitHub Action reaches the same flags through `entrypoint.sh`, wh
 translates `INPUT_*` environment variables into flags and makes no routing decisions of its own —
 the CLI and the Action always share one code path.
 
-Conversion modules live in `lib/` and are *sourced*, not executed, by `publish-md-pdf.sh`. Each
+Conversion modules live in `lib/` and are _sourced_, not executed, by `publish-md-pdf.sh`. Each
 format exposes exactly two functions the main script calls by convention —
 `convert_<format>_init` (one-time tool checks/setup) and `convert_<format>_file <in> <out>` — so
 adding a format means adding a module plus one row to the `case "$format"` block in
@@ -71,7 +71,7 @@ adding a format means adding a module plus one row to the `case "$format"` block
 - `lib/convert-confluence.sh` — pandoc (gfm → HTML5) then a line-oriented post-process
   (`convert_confluence_code_blocks`) that rewrites pandoc's `<pre><code>` blocks into Confluence's
   `<ac:structured-macro ac:name="code">` XHTML, and rewrites checkbox `<input>` elements into the
-  ☐/☒ characters pandoc's own gfm *writer* recognizes as task-list markers — which is what makes
+  ☐/☒ characters pandoc's own gfm _writer_ recognizes as task-list markers — which is what makes
   the reverse conversion below possible.
 - `lib/convert-md.sh` — the reverse: `convert_md_restore_code_blocks` rewrites Confluence code
   macros back into `<pre><code>` before handing the fragment to pandoc's HTML reader (gfm output).
