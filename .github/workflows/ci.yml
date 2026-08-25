@@ -116,12 +116,13 @@ jobs:
             -v /tmp/confluence-mock/page.json:/usr/share/nginx/html/page.json:ro \
             nginx:alpine
 
+          code="000"
           for _ in {1..20}; do
             code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18085/ || true)"
-            [ -n "$code" ] && break
+            [ "$code" != "000" ] && break
             sleep 0.5
           done
-          [ -n "$code" ] || {
+          [ "$code" != "000" ] || {
             echo "ERROR: mock server never came up"
             docker logs confluence-mock
             exit 1
