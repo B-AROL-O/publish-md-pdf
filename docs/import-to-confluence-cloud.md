@@ -2,6 +2,10 @@
 
 This HOWTO covers how to get the output of `--format confluence` — or the
 source `.md` it was generated from — into a real Confluence Cloud page.
+Going the other way — fetching an existing Confluence Cloud page straight
+from its URL — is `--format md`/`pdf`/`confluence` with a URL as the input;
+see the
+[main README's Importing a Confluence page by URL section](../README.md#importing-a-confluence-page-by-url).
 
 There are two supported paths, depending on how much fidelity you need:
 

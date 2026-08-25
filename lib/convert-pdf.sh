@@ -27,7 +27,7 @@ convert_pdf_init() {
 	pdf_pandoc_extra_args=()
 	if command -v mmdc >/dev/null 2>&1; then
 		pdf_mermaid_tmp_dir="$(mktemp -d)"
-		trap 'rm -rf "$pdf_mermaid_tmp_dir"' EXIT
+		register_cleanup "$pdf_mermaid_tmp_dir"
 		export PUBLISH_MD_PDF_MERMAID_TMPDIR="$pdf_mermaid_tmp_dir"
 		export PUBLISH_MD_PDF_MERMAID_PUPPETEER_CONFIG="$SCRIPT_DIR/mermaid-puppeteer-config.json"
 		pdf_pandoc_extra_args=(--lua-filter="$SCRIPT_DIR/mermaid-filter.lua")

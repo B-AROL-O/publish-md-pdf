@@ -61,6 +61,179 @@ jobs:
 
           rm -f sample.confluence sample-roundtrip.md
 
+      # Everything below exercises the "import a Confluence page by URL" feature
+      # (issue #10) against a local nginx mock -- no real Confluence Cloud
+      # instance or credentials involved. Both containers use --network host so
+      # the tool's container can reach the mock at 127.0.0.1.
+      - name: Confluence URL import - build mock fixtures
+        run: |
+          mkdir -p /tmp/confluence-mock
+          docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+            --format confluence sample.md
+          jq -n --arg body "$(cat sample.confluence)" \
+            '{id: "12345", title: "Sample document", spaceId: "98765",
+              body: {storage: {value: $body, representation: "storage"}},
+              version: {number: 1}}' >/tmp/confluence-mock/page.json
+          rm -f sample.confluence
+
+          htpasswd_hash="$(openssl passwd -apr1 mocktoken)"
+          printf 'mockuser@example.com:%s\n' "$htpasswd_hash" >/tmp/confluence-mock/htpasswd
+
+          cat >/tmp/confluence-mock/nginx.conf <<'NGINX_EOF'
+          server {
+              listen 18085;
+
+              location = /wiki/x/AYAJ4 {
+                  auth_basic "Confluence Mock";
+                  auth_basic_user_file /etc/nginx/htpasswd;
+                  return 302 /wiki/spaces/DEV/pages/12345/Sample+Page;
+              }
+
+              location = /wiki/spaces/DEV/pages/12345/Sample+Page {
+                  auth_basic "Confluence Mock";
+                  auth_basic_user_file /etc/nginx/htpasswd;
+                  return 200 "mock page view\n";
+              }
+
+              location = /wiki/api/v2/pages/12345 {
+                  auth_basic "Confluence Mock";
+                  auth_basic_user_file /etc/nginx/htpasswd;
+                  default_type application/json;
+                  alias /usr/share/nginx/html/page.json;
+              }
+
+              location / {
+                  return 404;
+              }
+          }
+          NGINX_EOF
+
+      - name: Confluence URL import - start mock server
+        run: |
+          docker run -d --name confluence-mock --network host \
+            -v /tmp/confluence-mock/nginx.conf:/etc/nginx/conf.d/default.conf:ro \
+            -v /tmp/confluence-mock/htpasswd:/etc/nginx/htpasswd:ro \
+            -v /tmp/confluence-mock/page.json:/usr/share/nginx/html/page.json:ro \
+            nginx:alpine
+
+          for _ in {1..20}; do
+            code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18085/ || true)"
+            [ -n "$code" ] && break
+            sleep 0.5
+          done
+          [ -n "$code" ] || {
+            echo "ERROR: mock server never came up"
+            docker logs confluence-mock
+            exit 1
+          }
+
+      - name: Confluence URL import - tiny link, default format (md)
+        run: |
+          docker run --rm --network host \
+            -e CONFLUENCE_EMAIL=mockuser@example.com \
+            -e CONFLUENCE_API_TOKEN=mocktoken \
+            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
+            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+            http://127.0.0.1:18085/wiki/x/AYAJ4
+          test -s sample-document.md
+          grep -q '^title: "Sample document"$' sample-document.md
+          rm -f sample-document.md
+
+      - name: Confluence URL import - --format pdf bridges through md
+        run: |
+          docker run --rm --network host \
+            -e CONFLUENCE_EMAIL=mockuser@example.com \
+            -e CONFLUENCE_API_TOKEN=mocktoken \
+            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
+            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+            --format pdf http://127.0.0.1:18085/wiki/x/AYAJ4
+          test -s sample-document.pdf
+          rm -f sample-document.pdf
+
+      - name: Confluence URL import - --format confluence is byte-identical to the source
+        run: |
+          docker run --rm --network host \
+            -e CONFLUENCE_EMAIL=mockuser@example.com \
+            -e CONFLUENCE_API_TOKEN=mocktoken \
+            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
+            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+            --format confluence http://127.0.0.1:18085/wiki/x/AYAJ4
+
+          docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+            --format confluence --output-name sample-fixture sample.md
+
+          diff sample-document.confluence sample-fixture.confluence
+          rm -f sample-document.confluence sample-fixture.confluence
+
+      - name: Confluence URL import - direct /pages/<id> URL (no redirect)
+        run: |
+          docker run --rm --network host \
+            -e CONFLUENCE_EMAIL=mockuser@example.com \
+            -e CONFLUENCE_API_TOKEN=mocktoken \
+            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
+            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+            --output-name direct-test \
+            http://127.0.0.1:18085/wiki/spaces/DEV/pages/12345/Sample+Page
+          test -s direct-test.md
+          rm -f direct-test.md
+
+      - name: Confluence URL import - missing credentials fails clearly
+        run: |
+          if docker run --rm --network host \
+            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
+            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+            http://127.0.0.1:18085/wiki/x/AYAJ4 2>missing-creds.txt; then
+            echo "ERROR: should have failed without credentials"
+            exit 1
+          fi
+          grep -q "CONFLUENCE_EMAIL and CONFLUENCE_API_TOKEN" missing-creds.txt
+          rm -f missing-creds.txt
+
+      - name: Confluence URL import - server rejects bad credentials
+        run: |
+          if docker run --rm --network host \
+            -e CONFLUENCE_EMAIL=wrong@example.com \
+            -e CONFLUENCE_API_TOKEN=wrongtoken \
+            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
+            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+            http://127.0.0.1:18085/wiki/x/AYAJ4 2>bad-creds.txt; then
+            echo "ERROR: should have failed with bad credentials"
+            exit 1
+          fi
+          grep -q "authentication failed" bad-creds.txt
+          rm -f bad-creds.txt
+
+      - name: Confluence URL import - refuses plain HTTP without the override
+        run: |
+          if docker run --rm --network host \
+            -e CONFLUENCE_EMAIL=mockuser@example.com \
+            -e CONFLUENCE_API_TOKEN=mocktoken \
+            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+            http://127.0.0.1:18085/wiki/x/AYAJ4 2>insecure.txt; then
+            echo "ERROR: should have refused plain HTTP"
+            exit 1
+          fi
+          grep -q "PUBLISH_MD_PDF_ALLOW_INSECURE" insecure.txt
+          rm -f insecure.txt
+
+      - name: Confluence URL import - unrecognized URL shape fails clearly
+        run: |
+          if docker run --rm --network host \
+            -e CONFLUENCE_EMAIL=mockuser@example.com \
+            -e CONFLUENCE_API_TOKEN=mocktoken \
+            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
+            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+            http://127.0.0.1:18085/not-confluence/foo 2>bad-url.txt; then
+            echo "ERROR: should have failed on an unrecognized URL"
+            exit 1
+          fi
+          grep -q "not a recognized Confluence Cloud page URL" bad-url.txt
+          rm -f bad-url.txt
+
+      - name: Confluence URL import - stop mock server
+        if: always()
+        run: docker rm -f confluence-mock
+
       - name: Verify --css-file is rejected with a non-pdf format
         run: |
           if docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \

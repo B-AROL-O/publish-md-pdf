@@ -14,6 +14,9 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
         chromium \
         nodejs \
         npm \
+        curl \
+        ca-certificates \
+        jq \
     && apt-get autoremove -y \
     && apt-get clean -y \
     && rm -rf /var/lib/apt/lists/*
