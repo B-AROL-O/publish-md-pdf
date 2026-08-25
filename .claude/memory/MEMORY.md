@@ -1,0 +1,1 @@
+- [curl url_effective leaks credentials](feedback_curl_url_effective_leaks_credentials.md) — never print %{url_effective} after -u/-K auth + redirect
