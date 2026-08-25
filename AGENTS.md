@@ -76,10 +76,11 @@ adding a format means adding a module plus one row to the `case "$format"` block
 - `lib/convert-md.sh` — the reverse: `convert_md_restore_code_blocks` rewrites Confluence code
   macros back into `<pre><code>` before handing the fragment to pandoc's HTML reader (gfm output).
 
-  Both code-block rewriters are line-oriented state machines, not a regex over the whole file,
-  because pandoc always keeps a block's opening tag and first content line on one line, and its
-  closing tag glued to the last content line with no intervening newline. The two are mirror
-  images of each other — read the comments in both before changing the matching logic in either.
+  Both code-block rewriters are line-oriented state machines, not a regular expression over the
+  whole file, because pandoc always keeps a block's opening tag and first content line on one
+  line, and its closing tag glued to the last content line with no intervening newline. The two
+  are mirror images of each other — read the comments in both before changing the matching logic
+  in either.
 
 Two scripts, `md-to-confluence.sh` and `confluence-to-md.sh`, are deprecated v1 compatibility
 shims kept only so `docker run --entrypoint ...` invocations from before the v2 `--format` flag
@@ -87,7 +88,7 @@ still work; they forward to `publish-md-pdf.sh --format ...` and print a depreca
 stderr. Removal is planned for v3.0.0 — don't add new behavior to them.
 
 `--css-file` is only valid with `--format pdf`; the main script rejects it otherwise. A custom
-stylesheet needs its own `.task-checkbox` / `.task-checkbox.checked` rules (see
+style sheet needs its own `.task-checkbox` / `.task-checkbox.checked` rules (see
 `publish-md-pdf.css`) or task lists render as unstyled, empty markers.
 
 ## Documentation

@@ -11,10 +11,10 @@ email and an API token — and how to hand them to this tool safely. It's refere
 
 ## What you need
 
-| Value      | What it is                                             |
-| ---------- | ------------------------------------------------------- |
-| Email      | The email address of your Atlassian account             |
-| API token  | A secret credential that authenticates as that account, used in place of a password |
+| Value     | What it is                                                                          |
+| --------- | ----------------------------------------------------------------------------------- |
+| Email     | The email address of your Atlassian account                                         |
+| API token | A secret credential that authenticates as that account, used in place of a password |
 
 Confluence Cloud's REST API authenticates with **Basic auth using your email and an API token**,
 not your normal login password — Atlassian Cloud accounts don't accept a password over the REST
