@@ -20,11 +20,16 @@ format="$(printenv 'INPUT_FORMAT' || true)"
 output_dir="$(printenv 'INPUT_OUTPUT-DIR' || true)"
 output_name="$(printenv 'INPUT_OUTPUT-NAME' || true)"
 css_file="$(printenv 'INPUT_CSS-FILE' || true)"
+attachments="$(printenv 'INPUT_ATTACHMENTS' || true)"
 
 [ -n "$format" ] && args+=(--format "$format")
 [ -n "$output_dir" ] && args+=(--output-dir "$output_dir")
 [ -n "$output_name" ] && args+=(--output-name "$output_name")
 [ -n "$css_file" ] && args+=(--css-file "$css_file")
+# The only boolean input, and the only one that isn't a value passed straight
+# through: the flag it maps onto is the off switch, so it's added only when
+# the input turns the default behavior off.
+[ "$attachments" = "false" ] && args+=(--no-attachments)
 
 if [ -z "$INPUT_FILES" ]; then
 	echo "ERROR: 'files' input is required"

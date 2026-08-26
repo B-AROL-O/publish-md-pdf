@@ -131,6 +131,21 @@ img {
   height: auto;
 }
 
+/* A captioned image imported from Confluence arrives as its own image
+   paragraph immediately followed by a <span class="image-caption"> paragraph
+   -- see lib/convert-md.sh for why not <figure>/<figcaption>: pandoc's HTML
+   reader treats that as an Image-with-caption AST node rather than raw
+   markup, and its gfm writer (which has no Markdown syntax for a captioned
+   image) collapses it back into invisible alt text on pandoc 2.x -- what
+   this project's own Docker image actually ships. */
+.image-caption {
+  display: block;
+  margin-top: 0.4em;
+  color: #57606a;
+  font-size: 0.9em;
+  text-align: center;
+}
+
 blockquote {
   margin: 0.5em 0;
   padding: 0 16px 0 10px;

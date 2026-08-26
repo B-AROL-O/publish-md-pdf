@@ -76,6 +76,44 @@ jobs:
               version: {number: 1}}' >/tmp/confluence-mock/page.json
           rm -f sample.confluence
 
+          # A second page for the "images and attachments" tests (issue #13),
+          # separate from page 12345 above so those tests can't interfere with
+          # this one's attachments API / download mocks.
+          jq -n --arg body "$(cat sample-attachments.confluence)" \
+            '{id: "12346", title: "Sample page with attachments", spaceId: "98765",
+              body: {storage: {value: $body, representation: "storage"}},
+              version: {number: 1}}' >/tmp/confluence-mock/page-attachments.json
+
+          # 1x1 PNG and a plain text file, standing in for real attachments.
+          base64 -d >/tmp/confluence-mock/diagram.png <<<"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+          cp /tmp/confluence-mock/diagram.png /tmp/confluence-mock/logo.png
+          cp /tmp/confluence-mock/diagram.png /tmp/confluence-mock/evil.png
+          printf 'the specification text\n' >/tmp/confluence-mock/spec.txt
+
+          # downloadLink is shaped like a real Confluence Cloud v1 REST path
+          # (verified against a live site): relative to the "/wiki" base, not
+          # the bare origin, and it 302s to the actual file rather than
+          # serving it directly -- both of which the mock below now exercises,
+          # since an earlier, invented shape here let a "join with origin,
+          # don't follow the redirect" bug in lib/fetch-confluence.sh ship
+          # without either being caught. The fifth entry's downloadLink points
+          # off-mock -- see "attachment download refuses a cross-origin link"
+          # below, which asserts it's never fetched even though nothing serves
+          # it. The fourth entry's title is a directory traversal attempt --
+          # see "attachment download sanitizes a hostile filename".
+          jq -n '{results: [
+              {id: "att1", title: "diagram.png",
+               downloadLink: "/rest/api/content/12346/child/attachment/att1/download"},
+              {id: "att2", title: "B-AROL-O logo.png",
+               downloadLink: "/rest/api/content/12346/child/attachment/att2/download"},
+              {id: "att3", title: "specification.txt",
+               downloadLink: "/rest/api/content/12346/child/attachment/att3/download"},
+              {id: "att4", title: "../../evil.png",
+               downloadLink: "/rest/api/content/12346/child/attachment/att4/download"},
+              {id: "att5", title: "exfil.png",
+               downloadLink: "https://attacker.example.invalid/steal.png"}
+            ]}' >/tmp/confluence-mock/attachments.json
+
           htpasswd_hash="$(openssl passwd -apr1 mocktoken)"
           printf 'mockuser@example.com:%s\n' "$htpasswd_hash" >/tmp/confluence-mock/htpasswd
 
@@ -102,6 +140,52 @@ jobs:
                   alias /usr/share/nginx/html/page.json;
               }
 
+              location = /wiki/api/v2/pages/12346 {
+                  auth_basic "Confluence Mock";
+                  auth_basic_user_file /etc/nginx/htpasswd;
+                  default_type application/json;
+                  alias /usr/share/nginx/html/page-attachments.json;
+              }
+
+              location = /wiki/api/v2/pages/12346/attachments {
+                  auth_basic "Confluence Mock";
+                  auth_basic_user_file /etc/nginx/htpasswd;
+                  default_type application/json;
+                  alias /usr/share/nginx/html/attachments.json;
+              }
+
+              location ~ ^/download/attachments/12346/(diagram\.png|logo\.png|spec\.txt|evil\.png)$ {
+                  auth_basic "Confluence Mock";
+                  auth_basic_user_file /etc/nginx/htpasswd;
+                  alias /usr/share/nginx/html/$1;
+              }
+
+              # The v1 downloadLink shape: a 302 to the file above, not the
+              # file itself -- see the comment on attachments.json.
+              location = /wiki/rest/api/content/12346/child/attachment/att1/download {
+                  auth_basic "Confluence Mock";
+                  auth_basic_user_file /etc/nginx/htpasswd;
+                  return 302 /download/attachments/12346/diagram.png?version=1;
+              }
+
+              location = /wiki/rest/api/content/12346/child/attachment/att2/download {
+                  auth_basic "Confluence Mock";
+                  auth_basic_user_file /etc/nginx/htpasswd;
+                  return 302 /download/attachments/12346/logo.png?version=1;
+              }
+
+              location = /wiki/rest/api/content/12346/child/attachment/att3/download {
+                  auth_basic "Confluence Mock";
+                  auth_basic_user_file /etc/nginx/htpasswd;
+                  return 302 /download/attachments/12346/spec.txt?version=1;
+              }
+
+              location = /wiki/rest/api/content/12346/child/attachment/att4/download {
+                  auth_basic "Confluence Mock";
+                  auth_basic_user_file /etc/nginx/htpasswd;
+                  return 302 /download/attachments/12346/evil.png?version=1;
+              }
+
               location / {
                   return 404;
               }
@@ -114,6 +198,12 @@ jobs:
             -v /tmp/confluence-mock/nginx.conf:/etc/nginx/conf.d/default.conf:ro \
             -v /tmp/confluence-mock/htpasswd:/etc/nginx/htpasswd:ro \
             -v /tmp/confluence-mock/page.json:/usr/share/nginx/html/page.json:ro \
+            -v /tmp/confluence-mock/page-attachments.json:/usr/share/nginx/html/page-attachments.json:ro \
+            -v /tmp/confluence-mock/attachments.json:/usr/share/nginx/html/attachments.json:ro \
+            -v /tmp/confluence-mock/diagram.png:/usr/share/nginx/html/diagram.png:ro \
+            -v /tmp/confluence-mock/logo.png:/usr/share/nginx/html/logo.png:ro \
+            -v /tmp/confluence-mock/spec.txt:/usr/share/nginx/html/spec.txt:ro \
+            -v /tmp/confluence-mock/evil.png:/usr/share/nginx/html/evil.png:ro \
             nginx:alpine
 
           code="000"
@@ -177,6 +267,119 @@ jobs:
             http://127.0.0.1:18085/wiki/spaces/DEV/pages/12345/Sample+Page
           test -s direct-test.md
           rm -f direct-test.md
+
+      # Everything below exercises issue #13: images and other attachments on
+      # an imported page, against the page-12346 fixtures set up above.
+      - name: Confluence URL import - --format md downloads and resolves attachments
+        run: |
+          docker run --rm --network host \
+            -e CONFLUENCE_EMAIL=mockuser@example.com \
+            -e CONFLUENCE_API_TOKEN=mocktoken \
+            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
+            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+            --format md --output-name page \
+            http://127.0.0.1:18085/wiki/spaces/DEV/pages/12346/Sample+Attachments
+
+          test -s page-attachments/diagram.png
+          test -s page-attachments/specification.txt
+          diff page-attachments/diagram.png /tmp/confluence-mock/diagram.png
+
+          grep -q '!\[diagram.png\](page-attachments/diagram.png)' page.md
+          grep -q '\[the specification\](page-attachments/specification.txt)' page.md
+          # The captioned image's caption survived as its own visible
+          # paragraph, not only as invisible alt text. The <span> tags stay
+          # literal HTML (gfm has no Markdown syntax for a class attribute),
+          # but the caption's own markup inside it becomes plain gfm (**bold**,
+          # not <strong>), like everywhere else in this Markdown output.
+          grep -q '<span class="image-caption">Figure 1: the \*\*project\*\* logo.</span>' page.md
+          # ri:url images are left pointing at the remote host, not downloaded.
+          grep -q '!\[\](https://www.gnu.org/graphics/gplv3-127x51.png)' page.md
+          # An <ac:image> quoted inside a code sample is not an image and must
+          # survive as written, not be rewritten or have its attachment resolved.
+          grep -q '<ri:attachment ri:filename="not-really-an-image.png" />' page.md
+
+      - name: Confluence URL import - attachment download sanitizes a hostile filename
+        run: |
+          # The API reported a "../../evil.png" title; the file it downloaded to
+          # must be confined to page-attachments/ and never escape it.
+          test -s page-attachments/evil.png
+          test ! -e evil.png
+          test ! -e ../evil.png
+          # sudo: page-attachments/ was created by the container, which runs
+          # as root (see Dockerfile), so the runner's own non-root user can't
+          # remove files inside it without elevating.
+          sudo rm -rf page-attachments page.md
+
+      - name: Confluence URL import - attachment download refuses a cross-origin link
+        run: |
+          # The fifth attachment's downloadLink pointed at
+          # attacker.example.invalid; it must be skipped with a warning, and
+          # (since that host doesn't resolve) its absence proves no request
+          # to it was ever attempted, credentialed or not.
+          docker run --rm --network host \
+            -e CONFLUENCE_EMAIL=mockuser@example.com \
+            -e CONFLUENCE_API_TOKEN=mocktoken \
+            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
+            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+            --format md --output-name page \
+            http://127.0.0.1:18085/wiki/spaces/DEV/pages/12346/Sample+Attachments 2>cross-origin.txt
+          grep -q "skipping attachment 'exfil.png': its download link points outside" cross-origin.txt
+          test ! -e page-attachments/exfil.png
+          sudo rm -rf page-attachments page.md cross-origin.txt
+
+      - name: Confluence URL import - --format confluence does not download attachments
+        run: |
+          # Re-uploading a saved .confluence file to Confluence needs it to
+          # still reference attachments by name, not by a local path, so this
+          # format is the one exception that does not download anything.
+          docker run --rm --network host \
+            -e CONFLUENCE_EMAIL=mockuser@example.com \
+            -e CONFLUENCE_API_TOKEN=mocktoken \
+            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
+            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+            --format confluence --output-name page \
+            http://127.0.0.1:18085/wiki/spaces/DEV/pages/12346/Sample+Attachments
+          test -s page.confluence
+          test ! -d page-attachments
+          grep -q 'ri:filename="diagram.png"' page.confluence
+          rm -f page.confluence
+
+      - name: Confluence URL import - --format pdf embeds images, --no-attachments does not fetch them
+        run: |
+          docker run --rm --network host \
+            -e CONFLUENCE_EMAIL=mockuser@example.com \
+            -e CONFLUENCE_API_TOKEN=mocktoken \
+            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
+            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+            --format pdf --output-name page \
+            http://127.0.0.1:18085/wiki/spaces/DEV/pages/12346/Sample+Attachments
+          test -s page.pdf
+          # The temp directory attachments were downloaded into on the way to
+          # rendering is gone; nothing was left behind in the workspace.
+          test ! -d page-attachments
+          sudo apt-get install -y poppler-utils
+          [ "$(pdfimages -list page.pdf | tail -n +3 | wc -l)" -ge 1 ] || {
+            echo "ERROR: expected at least one embedded image in page.pdf"
+            exit 1
+          }
+          rm -f page.pdf
+
+          docker run --rm --network host \
+            -e CONFLUENCE_EMAIL=mockuser@example.com \
+            -e CONFLUENCE_API_TOKEN=mocktoken \
+            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
+            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+            --format md --no-attachments --output-name page \
+            http://127.0.0.1:18085/wiki/spaces/DEV/pages/12346/Sample+Attachments
+          test -s page.md
+          test ! -d page-attachments
+          # Still rewritten to a bare relative filename (unresolved, since
+          # nothing was downloaded to it) rather than dropped. No alt text:
+          # pandoc's gfm writer omits alt text that's identical to the
+          # image's src basename, which this is without an attachments
+          # directory prefixing it -- verified directly against pandoc.
+          grep -q '!\[\](diagram.png)' page.md
+          rm -f page.md
 
       - name: Confluence URL import - missing credentials fails clearly
         run: |

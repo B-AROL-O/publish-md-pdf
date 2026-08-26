@@ -82,6 +82,26 @@ adding a format means adding a module plus one row to the `case "$format"` block
   are mirror images of each other — read the comments in both before changing the matching logic
   in either.
 
+  `lib/convert-md.sh` also has `convert_md_rewrite_objects`, applied to every non-code line
+  alongside the code-block scanner: it rewrites `<ac:image>` (attachment- or URL-backed) and
+  `<ac:link>` (attachment-backed only — a link to another page, `ri:page`, has no local target and
+  is left alone) into plain `<img>`/`<a>`, since pandoc's HTML reader otherwise discards those
+  elements silently. It's a hand-rolled scanner rather than a regular expression for the same reason as the two
+  code-block rewriters — several objects routinely share one line in a storage body fetched from
+  the API — plus one more: `<ac:image>` can wrap an `<ac:caption>` holding arbitrary XHTML, which
+  neither a lazy nor a greedy single pattern handles correctly.
+
+- `lib/fetch-confluence.sh` also has `confluence_fetch_attachments`, which downloads every
+  attachment of a fetched page and fills `CONFLUENCE_ATTACHMENT_MAP` (declared in `lib/common.sh`,
+  since `convert-md.sh` reads it) so the rewriter above can point at where each one landed. Two
+  things here are load-bearing, not incidental: `confluence_attachment_url` refuses a
+  `downloadLink` that doesn't resolve to the page's own origin, because it's fetched with the same
+  credentialed `curl` config as everything else in this module — an unpinned link would hand the
+  Confluence API token to whatever host the response named, the same class of leak as
+  `.claude/memory/feedback_curl_url_effective_leaks_credentials.md`, one layer up; and
+  `confluence_safe_basename` (in `lib/common.sh`) sanitizes an attachment's title before it's used
+  as a filename, since that title is server-controlled text this tool writes straight to disk.
+
 Two scripts, `md-to-confluence.sh` and `confluence-to-md.sh`, are deprecated v1 compatibility
 shims kept only so `docker run --entrypoint ...` invocations from before the v2 `--format` flag
 still work; they forward to `publish-md-pdf.sh --format ...` and print a deprecation warning on
@@ -90,6 +110,16 @@ stderr. Removal is planned for v3.0.0 — don't add new behavior to them.
 `--css-file` is only valid with `--format pdf`; the main script rejects it otherwise. A custom
 style sheet needs its own `.task-checkbox` / `.task-checkbox.checked` rules (see
 `publish-md-pdf.css`) or task lists render as unstyled, empty markers.
+
+`--no-attachments` skips downloading a fetched page's attachments (`entrypoint.sh` maps the
+Action's boolean `attachments` input onto it — the one input that isn't a plain passthrough, since
+the flag it maps to is the off switch). `--format confluence` never downloads them regardless of
+this flag: a saved `.confluence` file is expected to keep referencing attachments the way a real
+Confluence page does, for re-uploading elsewhere, so it's the one format `publish-md-pdf.sh`'s
+conversion loop special-cases rather than wiring generically. `sample-attachments.confluence`
+exercises the rewriter and the downloader together, including the two adversarial fixtures
+(a directory-traversal title, a cross-origin `downloadLink`) — see the CI steps under "Confluence
+URL import" following it in `.github/workflows/ci.yml` before changing either.
 
 ## Documentation
 
