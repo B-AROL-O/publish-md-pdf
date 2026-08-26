@@ -46,6 +46,9 @@ usage() {
 	echo "  --css-file FILE     Stylesheet to use (default: publish-md-pdf.css); only valid"
 	echo "                      with --format pdf. A custom stylesheet should keep the"
 	echo "                      .task-checkbox rules from the default one to render task lists"
+	echo "  --no-attachments    Don't download the attachments of a fetched Confluence page."
+	echo "                      Image and file references are still rewritten, but point at"
+	echo "                      files that were never downloaded"
 	echo
 	echo "An input starting with http:// or https:// is fetched as a Confluence Cloud page"
 	echo "(see docs/confluence-authentication.md for the required CONFLUENCE_EMAIL and"
@@ -58,6 +61,7 @@ output_dir="$PWD"
 output_name=""
 css_file="$SCRIPT_DIR/publish-md-pdf.css"
 css_file_given=0
+fetch_attachments=1
 
 require_argument() {
 	[ "$2" -ge 2 ] || {
@@ -89,6 +93,10 @@ while [ $# -gt 0 ]; do
 		css_file="$2"
 		css_file_given=1
 		shift 2
+		;;
+	--no-attachments)
+		fetch_attachments=0
+		shift
 		;;
 	-h | --help)
 		usage
@@ -193,10 +201,20 @@ for input_file in "$@"; do
 		confluence_fetch_page "$input_file" "$confluence_tmp"
 		slug="$(confluence_slug "$CONFLUENCE_FETCH_TITLE" "$CONFLUENCE_FETCH_PAGE_ID")"
 
+		# Reset per input, so a second page's images can't inherit the first
+		# page's attachment directory.
+		CONFLUENCE_ATTACHMENT_PREFIX=""
+		CONFLUENCE_ATTACHMENT_MAP=()
+
 		case "$format" in
 		confluence)
 			# Already Confluence Storage Format -- write the fetched body as-is
 			# rather than round-tripping it through md, which would be lossy.
+			# Attachments are deliberately NOT downloaded here: the body still
+			# references them as ri:attachment/ri:filename, which is exactly
+			# what a real Confluence page looks like, so re-uploading this file
+			# elsewhere keeps working the way it always did. Only --format md
+			# and --format pdf resolve those references locally.
 			out_name="$(resolve_output_name "$slug.confluence" confluence confluence "$output_name")"
 			out_file="$output_dir/$out_name"
 			# cat > rather than cp, so $out_file gets the umask-based mode every
@@ -206,12 +224,31 @@ for input_file in "$@"; do
 		md)
 			out_name="$(resolve_output_name "$slug.confluence" confluence md "$output_name")"
 			out_file="$output_dir/$out_name"
+			# Attachments land in a directory named after the Markdown file and
+			# are referenced relatively, so the two move together.
+			if [ "$fetch_attachments" -eq 1 ]; then
+				CONFLUENCE_ATTACHMENT_PREFIX="${out_name%.md}-attachments"
+				confluence_fetch_attachments "$CONFLUENCE_FETCH_BASE" "$CONFLUENCE_FETCH_PAGE_ID" \
+					"$output_dir/$CONFLUENCE_ATTACHMENT_PREFIX"
+			fi
 			convert_md_file "$confluence_tmp" "$out_file"
 			confluence_fetch_prepend_front_matter "$out_file"
 			;;
 		pdf)
-			md_tmp="$(mktemp --suffix=.md)"
-			register_cleanup "$md_tmp"
+			# WeasyPrint embeds image data into the PDF, so the downloads are
+			# only needed while rendering: everything goes in one temp directory
+			# that convert_pdf_file resolves relative paths against (via pandoc's
+			# --resource-path and WeasyPrint's --base-url, both the bridge file's
+			# own directory) and the cleanup trap removes. The result is a
+			# self-contained PDF with no stray files left in the output directory.
+			bridge_dir="$(mktemp -d)"
+			register_cleanup "$bridge_dir"
+			md_tmp="$bridge_dir/page.md"
+			if [ "$fetch_attachments" -eq 1 ]; then
+				CONFLUENCE_ATTACHMENT_PREFIX="assets"
+				confluence_fetch_attachments "$CONFLUENCE_FETCH_BASE" "$CONFLUENCE_FETCH_PAGE_ID" \
+					"$bridge_dir/assets"
+			fi
 			convert_md_file "$confluence_tmp" "$md_tmp"
 			confluence_fetch_prepend_front_matter "$md_tmp"
 			out_name="$(resolve_output_name "$slug.md" md pdf "$output_name")"

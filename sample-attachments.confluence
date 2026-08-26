@@ -1,0 +1,17 @@
+<h1>Sample page with attachments</h1>
+<p>This fixture exercises the object macros a real Confluence page uses to reference the files attached to it. Converting it with <code>--format md</code> should turn every one of them into ordinary Markdown.</p>
+<h2>An embedded image</h2>
+<p><ac:image ac:align="center" ac:width="400"><ri:attachment ri:filename="diagram.png" ri:version-at-save="1" /></ac:image></p>
+<h2>An image with a caption</h2>
+<ac:image ac:align="center"><ri:attachment ri:filename="B-AROL-O logo.png" /><ac:caption><p>Figure 1: the <strong>project</strong> logo.</p></ac:caption></ac:image>
+<h2>An image hosted somewhere else</h2>
+<p><ac:image><ri:url ri:value="https://www.gnu.org/graphics/gplv3-127x51.png" /></ac:image></p>
+<h2>A link to an attached file</h2>
+<p>The full text is in <ac:link><ri:attachment ri:filename="specification.txt" /><ac:plain-text-link-body><![CDATA[the specification]]></ac:plain-text-link-body></ac:link>, attached to this page.</p>
+<h2>A link to another page, which stays unresolved</h2>
+<p>See also <ac:link><ri:page ri:content-title="Another page" /><ac:plain-text-link-body><![CDATA[Another page]]></ac:plain-text-link-body></ac:link>.</p>
+<h2>Two images on one line</h2>
+<p>Side by side: <ac:image><ri:attachment ri:filename="diagram.png" /></ac:image> <ac:image><ri:attachment ri:filename="B-AROL-O logo.png" /></ac:image> and text after them.</p>
+<h2>An image macro quoted inside a code block</h2>
+<p>This one is a code sample, not an image, and must survive as written:</p>
+<ac:structured-macro ac:name="code" ac:schema-version="1"><ac:parameter ac:name="language">xml</ac:parameter><ac:plain-text-body><![CDATA[<ac:image><ri:attachment ri:filename="not-really-an-image.png" /></ac:image>]]></ac:plain-text-body></ac:structured-macro>

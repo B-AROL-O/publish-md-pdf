@@ -241,6 +241,166 @@ confluence_fetch_page() {
 	CONFLUENCE_FETCH_PAGE_ID="$(jq -r '.id' "$response_file")"
 	CONFLUENCE_FETCH_VERSION="$(jq -r '.version.number' "$response_file")"
 	CONFLUENCE_FETCH_URL="$input_url"
+	# The post-redirect base, so the caller can reach the same site's
+	# attachments API without re-resolving a tiny link.
+	# shellcheck disable=SC2034 # read by publish-md-pdf.sh
+	CONFLUENCE_FETCH_BASE="$base"
+}
+
+# Resolves an attachment's downloadLink against the page's own origin, and
+# refuses anything pointing anywhere else.
+#
+# This matters more than it looks. downloadLink is a value out of the API
+# response, and every attachment is fetched with the same -K config that
+# carries the Confluence credentials, so a link naming another host would
+# hand the API token straight to it. That is the same failure mode as the
+# %{url_effective} leak recorded in .claude/memory/ -- credentials following a
+# URL somewhere the user never chose -- one layer up. A protocol-relative
+# "//host/path" is refused explicitly, since it would otherwise sail past a
+# leading-slash check and still change hosts.
+confluence_attachment_url() {
+	local origin="$1" link="$2"
+	case "$link" in
+	//*) return 1 ;;
+	/*)
+		printf '%s%s\n' "$origin" "$link"
+		;;
+	http://* | https://*)
+		[ "$(confluence_url_origin "$link")" = "$origin" ] || return 1
+		printf '%s\n' "$link"
+		;;
+	*) return 1 ;;
+	esac
+}
+
+# Picks the local basename an attachment is stored under: sanitized (see
+# confluence_safe_basename), then de-duplicated, since two Confluence
+# attachments whose titles differ only in characters the sanitizer folds
+# ("a b.png" and "a-b.png") would otherwise overwrite each other.
+confluence_attachment_dedupe() {
+	local safe="$1" stem ext n=1
+	if [ -z "${confluence_fetch_used_names[$safe]:-}" ]; then
+		printf '%s\n' "$safe"
+		return 0
+	fi
+	case "$safe" in
+	*.*)
+		stem="${safe%.*}"
+		ext=".${safe##*.}"
+		;;
+	*)
+		stem="$safe"
+		ext=""
+		;;
+	esac
+	while [ -n "${confluence_fetch_used_names[${stem}-${n}${ext}]:-}" ]; do
+		n=$((n + 1))
+	done
+	printf '%s\n' "${stem}-${n}${ext}"
+}
+
+# Downloads every attachment of page $2 into $3, and records each one in
+# CONFLUENCE_ATTACHMENT_MAP so lib/convert-md.sh can point <img>/<a> at the
+# file it actually landed in. $1 is the "https://host/wiki" base.
+#
+# A failure here downgrades to a warning rather than aborting: a page whose
+# text converted fine shouldn't be lost over one unreadable attachment. The
+# unresolved reference that results is still visible in the output, unlike the
+# silently dropped image this whole feature replaces.
+confluence_fetch_attachments() {
+	local base="$1" page_id="$2" dest_dir="$3"
+	local origin api_url response_file http_status title link url safe target next
+	local page=0 max_pages=50
+
+	CONFLUENCE_ATTACHMENT_MAP=()
+	CONFLUENCE_FETCH_ATTACHMENT_COUNT=0
+	declare -gA confluence_fetch_used_names=()
+
+	origin="$(confluence_url_origin "$base")"
+	api_url="${base}/api/v2/pages/${page_id}/attachments?limit=100"
+	response_file="$(mktemp)"
+	register_cleanup "$response_file"
+
+	while [ -n "$api_url" ] && [ "$page" -lt "$max_pages" ]; do
+		page=$((page + 1))
+		confluence_require_secure_url "$api_url" || return 1
+
+		http_status="$(curl -sS -K "$confluence_fetch_curl_cfg" -o "$response_file" -w '%{http_code}' "$api_url")" || {
+			echo "WARNING: could not reach the attachments API; attachment references may not resolve" >&2
+			return 0
+		}
+		case "$http_status" in
+		200) ;;
+		404)
+			# No attachment container on this page -- nothing to download.
+			return 0
+			;;
+		*)
+			echo "WARNING: HTTP $http_status listing attachments for page $page_id;" >&2
+			echo "         attachment references may not resolve" >&2
+			return 0
+			;;
+		esac
+
+		if ! jq -e '.results != null' "$response_file" >/dev/null 2>&1; then
+			echo "ERROR: attachments response has no .results array (unexpected API shape)" >&2
+			echo "       $api_url" >&2
+			return 1
+		fi
+
+		# Process substitution, not a pipe: the loop has to run in this shell so
+		# that CONFLUENCE_ATTACHMENT_MAP survives it.
+		while IFS=$'\t' read -r title link; do
+			if [ -z "$title" ] || [ -z "$link" ]; then
+				continue
+			fi
+
+			if ! url="$(confluence_attachment_url "$origin" "$link")"; then
+				echo "WARNING: skipping attachment '$title': its download link points outside $origin" >&2
+				continue
+			fi
+
+			safe="$(confluence_safe_basename "$title" "attachment-$((CONFLUENCE_FETCH_ATTACHMENT_COUNT + 1))")"
+			safe="$(confluence_attachment_dedupe "$safe")"
+			confluence_fetch_used_names[$safe]=1
+
+			mkdir -p "$dest_dir"
+			target="$dest_dir/$safe"
+			# --fail so an HTTP error body is never written out as if it were the
+			# attachment, and --max-time to override the 30s in the shared curl
+			# config -- ample for a JSON body, far too short for a large file.
+			if ! curl -sS -f -K "$confluence_fetch_curl_cfg" --max-time 300 -o "$target" "$url"; then
+				echo "WARNING: failed to download attachment '$title'" >&2
+				rm -f "$target"
+				continue
+			fi
+
+			# shellcheck disable=SC2034 # read by lib/convert-md.sh
+			CONFLUENCE_ATTACHMENT_MAP["$title"]="$safe"
+			CONFLUENCE_FETCH_ATTACHMENT_COUNT=$((CONFLUENCE_FETCH_ATTACHMENT_COUNT + 1))
+		done < <(jq -r '.results[] | select(.title != null and .downloadLink != null) |
+			[.title, .downloadLink] | @tsv' "$response_file")
+
+		next="$(jq -r '._links.next // empty' "$response_file")"
+		case "$next" in
+		"") api_url="" ;;
+		//*) api_url="" ;;
+		/*) api_url="${origin}${next}" ;;
+		http://* | https://*)
+			if [ "$(confluence_url_origin "$next")" = "$origin" ]; then
+				api_url="$next"
+			else
+				echo "WARNING: attachments pagination link points outside $origin; stopping here" >&2
+				api_url=""
+			fi
+			;;
+		*) api_url="" ;;
+		esac
+	done
+
+	if [ "$CONFLUENCE_FETCH_ATTACHMENT_COUNT" -gt 0 ]; then
+		echo "INFO: Downloaded $CONFLUENCE_FETCH_ATTACHMENT_COUNT attachment(s) to $dest_dir"
+	fi
 }
 
 # Prepends YAML front matter (title, source URL, page id, version) to the

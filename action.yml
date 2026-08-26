@@ -34,6 +34,13 @@ inputs:
       format 'pdf'; combining it with another format is an error"
     required: false
     default: ""
+  attachments:
+    description:
+      "Whether to download the attachments of a fetched Confluence Cloud page, so that its
+      images and file links resolve. Set to 'false' to skip the downloads; references are
+      still rewritten, but point at files that were never downloaded"
+    required: false
+    default: "true"
 
 runs:
   using: "docker"

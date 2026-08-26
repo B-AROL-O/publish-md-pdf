@@ -48,6 +48,12 @@ convert_md_restore_code_blocks() {
 				fi
 				continue
 			fi
+			# Images and attachment links are rewritten here, on the non-code
+			# lines only, so that a literal <ac:image> quoted inside a code
+			# macro survives as the code sample it is.
+			if [[ "$line" == *"<ac:image"* || "$line" == *"<ac:link"* ]]; then
+				line="$(convert_md_rewrite_objects "$line")"
+			fi
 			printf '%s\n' "$line"
 			continue
 		fi
@@ -61,6 +67,182 @@ convert_md_restore_code_blocks() {
 			buf+=$'\n'"$line"
 		fi
 	done <"$1"
+}
+
+# Pulls a double-quoted attribute value out of an element's raw text.
+# Confluence writes storage-format attributes in a canonical double-quoted
+# form, so there's no single-quoted variant to handle.
+convert_md_attr() {
+	local hay="$1" attr="$2"
+	if [[ "$hay" =~ $attr=\"([^\"]*)\" ]]; then
+		xml_unescape_attr "${BASH_REMATCH[1]}"
+	fi
+}
+
+# The raw inner XHTML of the first <NAME ...>...</NAME> child in $1, or
+# nothing when the element isn't present.
+convert_md_element_body() {
+	local hay="$1" name="$2" body
+	case "$hay" in
+	*"<$name>"* | *"<$name "*) ;;
+	*) return 0 ;;
+	esac
+	case "$hay" in
+	*"</$name>"*) ;;
+	*) return 0 ;;
+	esac
+	body="${hay#*<"$name"}"
+	body="${body#*>}"
+	body="${body%%"</$name>"*}"
+	printf '%s' "$body"
+}
+
+# The local path an attachment reference resolves to: the sanitized basename
+# the downloader stored it under, inside the directory it downloaded into.
+# With an empty map and prefix -- a .confluence file converted straight off
+# disk, where there was never anything to download -- this degrades to a bare
+# filename relative to that file. A reference that doesn't resolve is still
+# better than the silently dropped image this replaces.
+convert_md_attachment_path() {
+	local filename="$1" safe
+	safe="${CONFLUENCE_ATTACHMENT_MAP[$filename]:-}"
+	if [ -z "$safe" ]; then
+		safe="$(confluence_safe_basename "$filename" "attachment")"
+	fi
+	if [ -n "$CONFLUENCE_ATTACHMENT_PREFIX" ]; then
+		printf '%s/%s' "$CONFLUENCE_ATTACHMENT_PREFIX" "$safe"
+	else
+		printf '%s' "$safe"
+	fi
+}
+
+# Renders one <ac:image> as HTML. Fails (leaving the original untouched) for
+# an image with neither an attachment nor a URL behind it.
+convert_md_emit_image() {
+	local elem="$1" filename url caption src alt
+	filename="$(convert_md_attr "$elem" 'ri:filename')"
+	url="$(convert_md_attr "$elem" 'ri:value')"
+	caption="$(convert_md_element_body "$elem" 'ac:caption')"
+
+	if [ -n "$filename" ]; then
+		src="$(convert_md_attachment_path "$filename")"
+		alt="$filename"
+	elif [ -n "$url" ]; then
+		# An <ri:url> image lives on some other host and needs no credentials,
+		# so it's left pointing there rather than downloaded -- the same thing
+		# this tool already does with a remote image in a plain .md file.
+		src="$url"
+		alt=""
+	else
+		return 1
+	fi
+
+	# ac:width/ac:height are deliberately dropped: publish-md-pdf.css caps
+	# images at max-width:100% so an oversized screenshot still fits the page,
+	# and carrying a width would make pandoc's gfm writer emit a raw <img>
+	# tag for every image instead of Markdown image syntax.
+	if [ -n "$caption" ]; then
+		# <figure> is the only shape that reaches the PDF with the caption
+		# still visible. pandoc's gfm writer has no Markdown syntax for an
+		# image caption, so it passes the figure through as raw HTML -- which
+		# is exactly what the pdf path's second pandoc run and WeasyPrint then
+		# render. An alt attribute alone would be invisible in both.
+		printf '<figure><img src="%s" alt="%s" /><figcaption>%s</figcaption></figure>' \
+			"$(html_escape_attr "$src")" "$(html_escape_attr "$alt")" "$caption"
+	else
+		printf '<img src="%s" alt="%s" />' \
+			"$(html_escape_attr "$src")" "$(html_escape_attr "$alt")"
+	fi
+}
+
+# Renders one <ac:link> as an <a>, but only the attachment-backed kind.
+# <ac:link> wrapping <ri:page> is a link to another Confluence page, which has
+# no local equivalent, so it's left alone exactly as before.
+convert_md_emit_link() {
+	local elem="$1" filename text
+	filename="$(convert_md_attr "$elem" 'ri:filename')"
+	[ -n "$filename" ] || return 1
+
+	text="$(convert_md_element_body "$elem" 'ac:plain-text-link-body')"
+	if [ -n "$text" ]; then
+		# A plain-text link body is CDATA-wrapped literal text, so it has to be
+		# escaped on its way into HTML; <ac:link-body> is already XHTML.
+		text="${text#<![CDATA[}"
+		text="${text%]]>}"
+		text="$(html_escape_attr "$text")"
+	else
+		text="$(convert_md_element_body "$elem" 'ac:link-body')"
+	fi
+	[ -n "$text" ] || text="$(html_escape_attr "$filename")"
+
+	printf '<a href="%s">%s</a>' "$(html_escape_attr "$(convert_md_attachment_path "$filename")")" "$text"
+}
+
+# Rewrites the storage-format elements that carry visible content -- images
+# and attachment links -- into the plain HTML pandoc's reader understands.
+# Without this pandoc silently discards them, which is why a page imported
+# from Confluence used to lose its images entirely.
+#
+# This is a scanner rather than a sed pattern for two reasons. A storage body
+# straight from the REST API puts the whole page on one line, so several
+# objects routinely share a line and a single non-global match won't do. And
+# an <ac:image> may wrap an <ac:caption> holding arbitrary XHTML, which a
+# "[^<]*" pattern cannot cross while a ".*" one would greedily swallow past
+# the element's own end tag. Neither element nests inside itself, so the first
+# end tag after a start tag is always the matching one.
+convert_md_rewrite_objects() {
+	local text="$1"
+	local out="" cand prefix best_prefix best_kind best_marker
+	local end_marker tail elem rest replacement
+
+	while :; do
+		best_kind=""
+		best_prefix=""
+		best_marker=""
+		# Both spellings of each start tag, so that <ac:link-body> -- which
+		# shares the "<ac:link" stem -- can never be mistaken for a link.
+		for cand in "<ac:image>" "<ac:image " "<ac:link>" "<ac:link "; do
+			[[ "$text" == *"$cand"* ]] || continue
+			prefix="${text%%"$cand"*}"
+			if [ -z "$best_kind" ] || [ "${#prefix}" -lt "${#best_prefix}" ]; then
+				best_prefix="$prefix"
+				best_marker="$cand"
+				case "$cand" in
+				"<ac:image"*) best_kind="image" ;;
+				*) best_kind="link" ;;
+				esac
+			fi
+		done
+		[ -n "$best_kind" ] || break
+
+		if [ "$best_kind" = "image" ]; then
+			end_marker="</ac:image>"
+		else
+			end_marker="</ac:link>"
+		fi
+
+		tail="${text#"$best_prefix$best_marker"}"
+		# An unterminated element (or a self-closing <ac:image/>, which carries
+		# no source to point at anyway): stop rewriting and pass the rest through.
+		[[ "$tail" == *"$end_marker"* ]] || break
+		elem="${tail%%"$end_marker"*}"
+		rest="${tail#*"$end_marker"}"
+
+		if [ "$best_kind" = "image" ]; then
+			replacement="$(convert_md_emit_image "$elem")" || replacement=""
+		else
+			replacement="$(convert_md_emit_link "$elem")" || replacement=""
+		fi
+
+		if [ -n "$replacement" ]; then
+			out+="$best_prefix$replacement"
+		else
+			out+="$best_prefix$best_marker$elem$end_marker"
+		fi
+		text="$rest"
+	done
+
+	printf '%s' "$out$text"
 }
 
 convert_md_file() {

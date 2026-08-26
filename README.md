@@ -53,7 +53,8 @@ alongside them and is only invoked when an input is a URL — see
 
 ```bash
 docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
-  [--format FORMAT] [--output-dir DIR] [--output-name NAME] [--css-file FILE] <file|url> [file2|url2 ...]
+  [--format FORMAT] [--output-dir DIR] [--output-name NAME] [--css-file FILE] \
+  [--no-attachments] <file|url> [file2|url2 ...]
 ```
 
 - `--format FORMAT` — the conversion to perform (default: `pdf`, or `md` if every input is a URL —
@@ -73,6 +74,8 @@ docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
   valid with `--format pdf`; combining it with another format is an error. A custom style sheet
   should keep the `.task-checkbox` rules from the default one (see [Notes](#notes)) if the source
   Markdown has GFM task lists (`- [ ]` / `- [x]`).
+- `--no-attachments` — don't download the attachments of a fetched Confluence Cloud page; see
+  [Images and other attachments](#images-and-other-attachments).
 
 Paths outside `$PWD` (a different `--output-dir`, a custom `--css-file`) need their own bind mount,
 since the script only sees paths inside the container.
@@ -96,6 +99,7 @@ being read as a file — see [Importing a Confluence page by URL](#importing-a-c
 | `output-dir`  | no       | Directory to write the output file(s) into (default: repository root)                                       |
 | `output-name` | no       | Filename for the output; only valid with a single input                                                     |
 | `css-file`    | no       | Path to a custom style sheet, relative to the repository root; only valid with `pdf`                        |
+| `attachments` | no       | `true` (default) or `false` — download a fetched page's attachments (see below)                             |
 
 Uploading or committing the resulting file(s) is the consumer's job (e.g. `actions/upload-artifact`).
 A URL input needs `CONFLUENCE_EMAIL` and `CONFLUENCE_API_TOKEN` set via the step's `env:` — see
@@ -214,13 +218,34 @@ Basic-auth scheme — see [docs/confluence-authentication.md](docs/confluence-au
 Sending them over plain HTTP is refused unless `PUBLISH_MD_PDF_ALLOW_INSECURE=1` is set (intended for
 a local test server, not real use).
 
+### Images and other attachments
+
+By default, every attachment on a fetched page is downloaded, so `ac:image`/`ri:attachment` images
+and `ac:link`/`ri:attachment` file links resolve rather than pointing at nothing:
+
+- `--format md` writes attachments into a `<output-name>-attachments/` directory next to the output
+  file, and references them from there (`![diagram.png](report-attachments/diagram.png)`). An
+  `<ac:image>` with a caption (`<ac:caption>`) becomes an HTML `<figure>`/`<figcaption>` instead of
+  plain Markdown image syntax — the only shape that keeps the caption visible in the rendered PDF, not
+  just as invisible alt text.
+- `--format pdf` downloads into a temporary directory that's removed once the PDF is rendered, so the
+  images end up embedded in the PDF with nothing left behind in the output directory.
+- `--format confluence` does **not** download attachments: the saved `.confluence` file keeps
+  referencing them the way a real Confluence page does (`ri:filename`, not a local path), so
+  re-uploading it elsewhere keeps working — see
+  [docs/import-to-confluence-cloud.md](docs/import-to-confluence-cloud.md).
+- An `<ac:image>` backed by `<ri:url>` (an image hosted elsewhere, not attached to the page) is left
+  pointing at that remote URL rather than downloaded, since fetching it wouldn't use — or need —
+  Confluence credentials.
+- Pass `--no-attachments` (or, via the Action, `attachments: false`) to skip every download; image and
+  file references are still rewritten, but then point at files that were never fetched.
+
 Known limitations, beyond those already listed for [Converting to/from
 Confluence](#converting-tofrom-confluence) — real Confluence pages use macros this tool's storage-to-Markdown
 conversion has never had to handle:
 
-- `ac:image` / `ri:attachment` (images) — attachments aren't downloaded, so image references won't
-  resolve.
-- `ac:link` / `ri:page` (internal links to other Confluence pages).
+- `ac:link` / `ri:page` (internal links to other Confluence pages) — left as plain text, since there's
+  no local file to point at.
 - `ac:task-list` — doesn't become GFM `- [ ]` / `- [x]` task-list syntax.
 - Info/note/warning panels, `ac:layout`, page properties, and structured macros other than `code`
   generally.

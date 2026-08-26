@@ -203,7 +203,13 @@ curl -s -u "you@company.com:$API_TOKEN" \
   attachment-backed `ac:image` macro, since there's no attachment to point
   at in a file-only conversion. If the source Markdown has local image
   references, upload them as attachments separately and adjust `src` (or
-  swap to `ac:image` macros) after import.
+  swap to `ac:image` macros) after import. This is one-directional: going
+  the other way, `--format md`/`--format pdf` against a page URL *do*
+  download that page's attachments and rewrite `ac:image`/`ac:link` to
+  point at them (see [Images and other
+  attachments](../README.md#images-and-other-attachments) in the README) —
+  but pushing a page back up, as this document covers, doesn't re-upload
+  attachments on your behalf either way.
 - A fenced code block with no language round-trips as an indented code
   block instead of a fenced one; this only affects presentation, not
   correctness.
