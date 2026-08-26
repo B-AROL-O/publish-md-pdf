@@ -225,9 +225,10 @@ and `ac:link`/`ri:attachment` file links resolve rather than pointing at nothing
 
 - `--format md` writes attachments into a `<output-name>-attachments/` directory next to the output
   file, and references them from there (`![diagram.png](report-attachments/diagram.png)`). An
-  `<ac:image>` with a caption (`<ac:caption>`) becomes an HTML `<figure>`/`<figcaption>` instead of
-  plain Markdown image syntax — the only shape that keeps the caption visible in the rendered PDF, not
-  just as invisible alt text.
+  `<ac:image>` with a caption (`<ac:caption>`) becomes the image followed by its own
+  `<span class="image-caption">` paragraph, styled by `publish-md-pdf.css`, instead of plain Markdown
+  image syntax — so the caption stays visible in the rendered PDF rather than only as invisible alt
+  text.
 - `--format pdf` downloads into a temporary directory that's removed once the PDF is rendered, so the
   images end up embedded in the PDF with nothing left behind in the output directory.
 - `--format confluence` does **not** download attachments: the saved `.confluence` file keeps

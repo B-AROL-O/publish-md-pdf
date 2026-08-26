@@ -254,9 +254,12 @@ jobs:
 
           grep -q '!\[diagram.png\](page-attachments/diagram.png)' page.md
           grep -q '\[the specification\](page-attachments/specification.txt)' page.md
-          # The captioned image survived as a <figure>, with the caption text
-          # visible rather than only present as alt text.
-          grep -q '<figcaption><p>Figure 1: the <strong>project</strong> logo.</p></figcaption>' page.md
+          # The captioned image's caption survived as its own visible
+          # paragraph, not only as invisible alt text. The <span> tags stay
+          # literal HTML (gfm has no Markdown syntax for a class attribute),
+          # but the caption's own markup inside it becomes plain gfm (**bold**,
+          # not <strong>), like everywhere else in this Markdown output.
+          grep -q '<span class="image-caption">Figure 1: the \*\*project\*\* logo.</span>' page.md
           # ri:url images are left pointing at the remote host, not downloaded.
           grep -q '!\[\](https://www.gnu.org/graphics/gplv3-127x51.png)' page.md
           # An <ac:image> quoted inside a code sample is not an image and must

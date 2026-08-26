@@ -116,6 +116,26 @@ convert_md_attachment_path() {
 	fi
 }
 
+# A <ac:caption> body is almost always a single Confluence-authored
+# paragraph ("<p>Fig 1: ...</p>"); unwrap that outer <p> so it can be
+# re-wrapped in <em> without nesting a block element inside an inline one.
+# Left as-is (rare, but simpler and still valid HTML) for anything that
+# isn't exactly one paragraph -- multiple paragraphs, or no <p> at all.
+convert_md_caption_text() {
+	local text="$1" inner
+	case "$text" in
+	'<p>'*'</p>')
+		inner="${text#<p>}"
+		inner="${inner%</p>}"
+		case "$inner" in
+		*'<p>'* | *'</p>'*) printf '%s' "$text" ;;
+		*) printf '%s' "$inner" ;;
+		esac
+		;;
+	*) printf '%s' "$text" ;;
+	esac
+}
+
 # Renders one <ac:image> as HTML. Fails (leaving the original untouched) for
 # an image with neither an attachment nor a URL behind it.
 convert_md_emit_image() {
@@ -142,13 +162,26 @@ convert_md_emit_image() {
 	# and carrying a width would make pandoc's gfm writer emit a raw <img>
 	# tag for every image instead of Markdown image syntax.
 	if [ -n "$caption" ]; then
-		# <figure> is the only shape that reaches the PDF with the caption
-		# still visible. pandoc's gfm writer has no Markdown syntax for an
-		# image caption, so it passes the figure through as raw HTML -- which
-		# is exactly what the pdf path's second pandoc run and WeasyPrint then
-		# render. An alt attribute alone would be invisible in both.
-		printf '<figure><img src="%s" alt="%s" /><figcaption>%s</figcaption></figure>' \
-			"$(html_escape_attr "$src")" "$(html_escape_attr "$alt")" "$caption"
+		# An earlier version of this wrapped the image and its caption in
+		# <figure>/<figcaption>, betting on pandoc's HTML reader keeping that
+		# intact as a raw block through the gfm round trip. It doesn't: on
+		# pandoc 2.x (what Debian bookworm -- this project's own base image --
+		# actually ships) that shape is read as an Image-with-caption AST node
+		# and the gfm writer, which has no Markdown syntax for a captioned
+		# image, collapses it straight back down to a plain image with the
+		# caption folded into invisible alt text -- silently reintroducing the
+		# exact "caption isn't visible" problem this exists to avoid. An <img>
+		# immediately followed by its own <em>-wrapped paragraph carries no
+		# such special AST meaning to lose: it's just an image, then a plain
+		# emphasized paragraph, verified identical across pandoc 2.17 and 3.1.
+		# Self-wrapping both in their own <p> keeps this correct whether or
+		# not Confluence had already wrapped the source <ac:image> in one. The
+		# span's class is publish-md-pdf.css's hook for styling it visually
+		# distinct from body text in the rendered PDF -- verified to survive
+		# the round trip as plain HTML, unlike <figure>/<figcaption> above.
+		printf '<p><img src="%s" alt="%s" /></p><p><span class="image-caption">%s</span></p>' \
+			"$(html_escape_attr "$src")" "$(html_escape_attr "$alt")" \
+			"$(convert_md_caption_text "$caption")"
 	else
 		printf '<img src="%s" alt="%s" />' \
 			"$(html_escape_attr "$src")" "$(html_escape_attr "$alt")"
