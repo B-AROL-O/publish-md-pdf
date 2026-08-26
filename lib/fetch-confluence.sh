@@ -247,23 +247,33 @@ confluence_fetch_page() {
 	CONFLUENCE_FETCH_BASE="$base"
 }
 
-# Resolves an attachment's downloadLink against the page's own origin, and
-# refuses anything pointing anywhere else.
+# Resolves an attachment's downloadLink against the page's own base (the
+# "https://host/wiki" prefix), and refuses anything pointing at another host.
 #
-# This matters more than it looks. downloadLink is a value out of the API
-# response, and every attachment is fetched with the same -K config that
-# carries the Confluence credentials, so a link naming another host would
-# hand the API token straight to it. That is the same failure mode as the
-# %{url_effective} leak recorded in .claude/memory/ -- credentials following a
-# URL somewhere the user never chose -- one layer up. A protocol-relative
-# "//host/path" is refused explicitly, since it would otherwise sail past a
-# leading-slash check and still change hosts.
+# A relative downloadLink is a v1 REST path (e.g.
+# "/rest/api/content/<id>/child/attachment/<attId>/download") -- unlike a
+# redirect Location header, it does not carry its own "/wiki" segment, so it
+# must hang off base, not the bare origin, or every download 404s. Verified
+# against a real Confluence Cloud site: joining with the origin alone always
+# 404s; joining with base resolves (as a 302, which the download itself now
+# follows -- see confluence_fetch_attachments).
+#
+# The security concern matters more than it looks, regardless of which part
+# it's joined to: downloadLink is a value out of the API response, and every
+# attachment is fetched with the same -K config that carries the Confluence
+# credentials, so a link naming another host would hand the API token
+# straight to it. That is the same failure mode as the %{url_effective} leak
+# recorded in .claude/memory/ -- credentials following a URL somewhere the
+# user never chose -- one layer up. A protocol-relative "//host/path" is
+# refused explicitly, since it would otherwise sail past a leading-slash
+# check and still change hosts.
 confluence_attachment_url() {
-	local origin="$1" link="$2"
+	local base="$1" link="$2" origin
+	origin="$(confluence_url_origin "$base")"
 	case "$link" in
 	//*) return 1 ;;
 	/*)
-		printf '%s%s\n' "$origin" "$link"
+		printf '%s%s\n' "$base" "$link"
 		;;
 	http://* | https://*)
 		[ "$(confluence_url_origin "$link")" = "$origin" ] || return 1
@@ -364,7 +374,7 @@ confluence_fetch_attachments() {
 				continue
 			fi
 
-			if ! url="$(confluence_attachment_url "$origin" "$link")"; then
+			if ! url="$(confluence_attachment_url "$base" "$link")"; then
 				echo "WARNING: skipping attachment '$title': its download link points outside $origin" >&2
 				continue
 			fi
@@ -378,11 +388,20 @@ confluence_fetch_attachments() {
 			# --fail so an HTTP error body is never written out as if it were the
 			# attachment, and --max-time to override the 30s in the shared curl
 			# config -- ample for a JSON body, far too short for a large file.
-			if ! curl -sS -f -K "$confluence_fetch_curl_cfg" --max-time 300 -o "$target" "$url"; then
+			# --location, since a v1 downloadLink (see confluence_attachment_url)
+			# resolves to a 302 to the actual content, not the content itself;
+			# --max-redirs bounds how far that's followed. curl itself (7.58.0+,
+			# and this image ships 7.88.1) drops the -K config's credentials
+			# before following a redirect to a different host, so this can't
+			# repeat the same-origin bypass confluence_attachment_url already
+			# guards against one step earlier.
+			if ! curl -sS -f -L --max-redirs 5 -K "$confluence_fetch_curl_cfg" --max-time 300 -o "$target" "$url"; then
 				echo "WARNING: failed to download attachment '$title'" >&2
 				rm -f "$target"
 				continue
 			fi
+
+			echo "INFO: Downloaded attachment '$title' -> $target"
 
 			# shellcheck disable=SC2034 # read by lib/convert-md.sh
 			CONFLUENCE_ATTACHMENT_MAP["$title"]="$safe"

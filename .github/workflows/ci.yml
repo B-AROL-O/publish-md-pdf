@@ -90,20 +90,26 @@ jobs:
           cp /tmp/confluence-mock/diagram.png /tmp/confluence-mock/evil.png
           printf 'the specification text\n' >/tmp/confluence-mock/spec.txt
 
-          # The fifth entry's downloadLink points off-mock -- see
-          # "attachment download refuses a cross-origin link" below, which
-          # asserts it's never fetched even though nothing serves it. The
-          # fourth entry's title is a directory traversal attempt -- see
-          # "attachment download sanitizes a hostile filename".
+          # downloadLink is shaped like a real Confluence Cloud v1 REST path
+          # (verified against a live site): relative to the "/wiki" base, not
+          # the bare origin, and it 302s to the actual file rather than
+          # serving it directly -- both of which the mock below now exercises,
+          # since an earlier, invented shape here let a "join with origin,
+          # don't follow the redirect" bug in lib/fetch-confluence.sh ship
+          # without either being caught. The fifth entry's downloadLink points
+          # off-mock -- see "attachment download refuses a cross-origin link"
+          # below, which asserts it's never fetched even though nothing serves
+          # it. The fourth entry's title is a directory traversal attempt --
+          # see "attachment download sanitizes a hostile filename".
           jq -n '{results: [
               {id: "att1", title: "diagram.png",
-               downloadLink: "/download/attachments/12346/diagram.png?version=1"},
+               downloadLink: "/rest/api/content/12346/child/attachment/att1/download"},
               {id: "att2", title: "B-AROL-O logo.png",
-               downloadLink: "/download/attachments/12346/logo.png?version=1"},
+               downloadLink: "/rest/api/content/12346/child/attachment/att2/download"},
               {id: "att3", title: "specification.txt",
-               downloadLink: "/download/attachments/12346/spec.txt?version=1"},
+               downloadLink: "/rest/api/content/12346/child/attachment/att3/download"},
               {id: "att4", title: "../../evil.png",
-               downloadLink: "/download/attachments/12346/evil.png?version=1"},
+               downloadLink: "/rest/api/content/12346/child/attachment/att4/download"},
               {id: "att5", title: "exfil.png",
                downloadLink: "https://attacker.example.invalid/steal.png"}
             ]}' >/tmp/confluence-mock/attachments.json
@@ -152,6 +158,32 @@ jobs:
                   auth_basic "Confluence Mock";
                   auth_basic_user_file /etc/nginx/htpasswd;
                   alias /usr/share/nginx/html/$1;
+              }
+
+              # The v1 downloadLink shape: a 302 to the file above, not the
+              # file itself -- see the comment on attachments.json.
+              location = /wiki/rest/api/content/12346/child/attachment/att1/download {
+                  auth_basic "Confluence Mock";
+                  auth_basic_user_file /etc/nginx/htpasswd;
+                  return 302 /download/attachments/12346/diagram.png?version=1;
+              }
+
+              location = /wiki/rest/api/content/12346/child/attachment/att2/download {
+                  auth_basic "Confluence Mock";
+                  auth_basic_user_file /etc/nginx/htpasswd;
+                  return 302 /download/attachments/12346/logo.png?version=1;
+              }
+
+              location = /wiki/rest/api/content/12346/child/attachment/att3/download {
+                  auth_basic "Confluence Mock";
+                  auth_basic_user_file /etc/nginx/htpasswd;
+                  return 302 /download/attachments/12346/spec.txt?version=1;
+              }
+
+              location = /wiki/rest/api/content/12346/child/attachment/att4/download {
+                  auth_basic "Confluence Mock";
+                  auth_basic_user_file /etc/nginx/htpasswd;
+                  return 302 /download/attachments/12346/evil.png?version=1;
               }
 
               location / {
