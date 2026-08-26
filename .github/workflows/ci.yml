@@ -341,7 +341,12 @@ jobs:
             http://127.0.0.1:18085/wiki/spaces/DEV/pages/12346/Sample+Attachments
           test -s page.md
           test ! -d page-attachments
-          grep -q '!\[diagram.png\](diagram.png)' page.md
+          # Still rewritten to a bare relative filename (unresolved, since
+          # nothing was downloaded to it) rather than dropped. No alt text:
+          # pandoc's gfm writer omits alt text that's identical to the
+          # image's src basename, which this is without an attachments
+          # directory prefixing it -- verified directly against pandoc.
+          grep -q '!\[\](diagram.png)' page.md
           rm -f page.md
 
       - name: Confluence URL import - missing credentials fails clearly
