@@ -80,6 +80,21 @@ docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
 Paths outside `$PWD` (a different `--output-dir`, a custom `--css-file`) need their own bind mount,
 since the script only sees paths inside the container.
 
+The container has no `USER` directive and always runs as root — required so the GitHub Action can
+write into GitHub's mounted `GITHUB_WORKSPACE` (see the `Dockerfile`'s comment) — so every file it
+writes into a bind-mounted `$PWD` is root-owned on the host. For local CLI use, add
+`--user "$(id -u):$(id -g)" -e HOME=/tmp` to get output owned by your own user instead:
+
+```bash
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/workspace" \
+  ghcr.io/b-arol-o/publish-md-pdf:v2 sample.md
+```
+
+`-e HOME=/tmp` matters whenever a Mermaid diagram needs rendering (see
+[Rendering Mermaid diagrams](#rendering-mermaid-diagrams)): without it, Puppeteer can't resolve a
+home directory for a UID with no `/etc/passwd` entry, and the diagram silently falls back to a plain
+code block instead of failing loudly.
+
 An input starting with `http://` or `https://` is fetched as a Confluence Cloud page instead of
 being read as a file — see [Importing a Confluence page by URL](#importing-a-confluence-page-by-url).
 
