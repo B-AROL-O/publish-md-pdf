@@ -273,7 +273,10 @@ jobs:
           test -s page-attachments/evil.png
           test ! -e evil.png
           test ! -e ../evil.png
-          rm -rf page-attachments page.md
+          # sudo: page-attachments/ was created by the container, which runs
+          # as root (see Dockerfile), so the runner's own non-root user can't
+          # remove files inside it without elevating.
+          sudo rm -rf page-attachments page.md
 
       - name: Confluence URL import - attachment download refuses a cross-origin link
         run: |
@@ -290,7 +293,7 @@ jobs:
             http://127.0.0.1:18085/wiki/spaces/DEV/pages/12346/Sample+Attachments 2>cross-origin.txt
           grep -q "skipping attachment 'exfil.png': its download link points outside" cross-origin.txt
           test ! -e page-attachments/exfil.png
-          rm -rf page-attachments page.md cross-origin.txt
+          sudo rm -rf page-attachments page.md cross-origin.txt
 
       - name: Confluence URL import - --format confluence does not download attachments
         run: |
