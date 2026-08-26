@@ -120,6 +120,21 @@ Uploading or committing the resulting file(s) is the consumer's job (e.g. `actio
 A URL input needs `CONFLUENCE_EMAIL` and `CONFLUENCE_API_TOKEN` set via the step's `env:` — see
 [Importing a Confluence page by URL](#importing-a-confluence-page-by-url).
 
+### Environment variables
+
+| Variable                        | Required                               | Description                                                                                               |
+| ------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `CONFLUENCE_EMAIL`              | only when an input is a Confluence URL | Confluence Cloud account email, used for Basic Auth against the REST API                                  |
+| `CONFLUENCE_API_TOKEN`          | only when an input is a Confluence URL | Confluence Cloud API token, used for Basic Auth against the REST API                                      |
+| `PUBLISH_MD_PDF_ALLOW_INSECURE` | no                                     | Set to `1` to allow fetching a Confluence URL over plain `http://` (a local test server only — see below) |
+
+Pass them as `-e CONFLUENCE_EMAIL -e CONFLUENCE_API_TOKEN` to `docker run` (reading the values from
+your own shell environment, so they never appear in `docker run`'s argv or shell history), or via the
+Action step's `env:` (never a plain `with:` input, since those are more prone to appearing in logs) —
+see [Importing a Confluence page by URL](#importing-a-confluence-page-by-url) for both in context, and
+[docs/confluence-authentication.md](docs/confluence-authentication.md) for how to find your account
+email and create the API token.
+
 ## Converting to/from Confluence
 
 `--format confluence` and `--format md` convert between Markdown and Confluence Storage Format as
