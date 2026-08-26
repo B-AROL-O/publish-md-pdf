@@ -108,7 +108,7 @@ part for you, so a conversion is a single command:
 | Script                                                     | For                                  |
 | ---------------------------------------------------------- | ------------------------------------ |
 | [`scripts/publish-md-pdf.ps1`](scripts/publish-md-pdf.ps1) | PowerShell — Windows, macOS or Linux |
-| [`scripts/publish-md-pdf.sh`](scripts/publish-md-pdf.sh)   | bash — Linux, macOS, WSL, Git Bash   |
+| [`scripts/publish-md-pdf.sh`](scripts/publish-md-pdf.sh)   | Bash — Linux, macOS, WSL, Git Bash   |
 
 Both need only Docker (on Windows, [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/)
 with the WSL 2 backend); they pull the image on first use, so no local pandoc or WeasyPrint install
@@ -140,7 +140,7 @@ scripts/publish-md-pdf.sh --format confluence --output-name release-notes report
 The PowerShell parameters are the same flags in PowerShell spelling, so `Get-Help` and tab
 completion work:
 
-| PowerShell       | CLI / bash wrapper |
+| PowerShell       | CLI / Bash wrapper |
 | ---------------- | ------------------ |
 | `-Format`        | `--format`         |
 | `-OutputDir`     | `--output-dir`     |

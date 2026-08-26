@@ -104,6 +104,9 @@ jobs:
           & ./scripts/publish-md-pdf.ps1 -OutputName one sample*.md
           if ($LASTEXITCODE -eq 0) { throw '-OutputName with a multi-file wildcard should have failed' }
           Remove-Item -Recurse -Force /tmp/wrapper-glob
+          # GitHub's pwsh shell exits with the trailing $LASTEXITCODE, which the
+          # deliberate failure above left at 1.
+          exit 0
 
       - name: Host wrappers - reject --css-file with a non-pdf format
         shell: bash

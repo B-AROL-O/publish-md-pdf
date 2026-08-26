@@ -112,7 +112,7 @@ nothing under `scripts/` reaches it). Beware the basename collision: the root
 no code, and the wrappers deliberately duplicate a little of the main script's validation so an
 obvious mistake fails before a container starts.
 
-The two wrappers are mirror images of each other and must stay that way — same flags (in bash and
+The two wrappers are mirror images of each other and must stay that way — same flags (in Bash and
 PowerShell spelling respectively), same defaults, same errors. Three things in them are
 load-bearing rather than incidental:
 
