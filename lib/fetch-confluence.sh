@@ -278,7 +278,7 @@ confluence_attachment_url() {
 # attachments whose titles differ only in characters the sanitizer folds
 # ("a b.png" and "a-b.png") would otherwise overwrite each other.
 confluence_attachment_dedupe() {
-	local safe="$1" stem ext n=1
+	local safe="$1" stem ext n=1 candidate
 	if [ -z "${confluence_fetch_used_names[$safe]:-}" ]; then
 		printf '%s\n' "$safe"
 		return 0
@@ -293,10 +293,19 @@ confluence_attachment_dedupe() {
 		ext=""
 		;;
 	esac
-	while [ -n "${confluence_fetch_used_names[${stem}-${n}${ext}]:-}" ]; do
+	# Built into a plain variable, rather than as the array subscript
+	# directly, so the "-" here is unambiguously string concatenation: shfmt
+	# can't tell this array is associative (declare -A) rather than indexed,
+	# and would otherwise reformat "${stem}-${n}${ext}" by adding spaces
+	# around the "-" as though it were arithmetic -- which for an
+	# associative subscript changes the actual key string, not just its
+	# formatting.
+	candidate="${stem}-${n}${ext}"
+	while [ -n "${confluence_fetch_used_names[$candidate]:-}" ]; do
 		n=$((n + 1))
+		candidate="${stem}-${n}${ext}"
 	done
-	printf '%s\n' "${stem}-${n}${ext}"
+	printf '%s\n' "$candidate"
 }
 
 # Downloads every attachment of page $2 into $3, and records each one in

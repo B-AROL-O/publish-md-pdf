@@ -86,16 +86,17 @@ adding a format means adding a module plus one row to the `case "$format"` block
   alongside the code-block scanner: it rewrites `<ac:image>` (attachment- or URL-backed) and
   `<ac:link>` (attachment-backed only — a link to another page, `ri:page`, has no local target and
   is left alone) into plain `<img>`/`<a>`, since pandoc's HTML reader otherwise discards those
-  elements silently. It's a hand-rolled scanner rather than a regex for the same reason as the two
+  elements silently. It's a hand-rolled scanner rather than a regular expression for the same reason as the two
   code-block rewriters — several objects routinely share one line in a storage body fetched from
   the API — plus one more: `<ac:image>` can wrap an `<ac:caption>` holding arbitrary XHTML, which
   neither a lazy nor a greedy single pattern handles correctly.
+
 - `lib/fetch-confluence.sh` also has `confluence_fetch_attachments`, which downloads every
   attachment of a fetched page and fills `CONFLUENCE_ATTACHMENT_MAP` (declared in `lib/common.sh`,
   since `convert-md.sh` reads it) so the rewriter above can point at where each one landed. Two
   things here are load-bearing, not incidental: `confluence_attachment_url` refuses a
   `downloadLink` that doesn't resolve to the page's own origin, because it's fetched with the same
-  credentialed curl config as everything else in this module — an unpinned link would hand the
+  credentialed `curl` config as everything else in this module — an unpinned link would hand the
   Confluence API token to whatever host the response named, the same class of leak as
   `.claude/memory/feedback_curl_url_effective_leaks_credentials.md`, one layer up; and
   `confluence_safe_basename` (in `lib/common.sh`) sanitizes an attachment's title before it's used
