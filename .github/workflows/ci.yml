@@ -61,6 +61,65 @@ jobs:
 
           rm -f sample.confluence sample-roundtrip.md
 
+      # The two host-side wrappers under scripts/ are what a documentation repo
+      # copies in; they must agree with each other and with the image's own CLI.
+      # Both default to the :v2 tag built above, so these resolve locally.
+      # The mkdir'd directory is outside $PWD on purpose: it forces the extra
+      # bind mount, whose container path each wrapper has to translate back.
+      - name: Host wrapper (bash) - convert into a directory outside $PWD
+        run: |
+          mkdir -p /tmp/wrapper-out
+          output="$(scripts/publish-md-pdf.sh --output-dir /tmp/wrapper-out sample.md 2>&1)"
+          echo "$output"
+          test -s /tmp/wrapper-out/sample.pdf
+          # The wrapper owns this translation; a leaked /mnt/extra-N is the bug.
+          echo "$output" | grep -qF /tmp/wrapper-out/sample.pdf
+          if echo "$output" | grep -q "/mnt/extra-"; then
+            echo "ERROR: wrapper leaked a container path into its output"
+            exit 1
+          fi
+          rm -rf /tmp/wrapper-out
+
+      - name: Host wrapper (PowerShell) - same conversion, same expectations
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path /tmp/wrapper-out-ps | Out-Null
+          $output = & ./scripts/publish-md-pdf.ps1 -OutputDir /tmp/wrapper-out-ps sample.md 2>&1 | Out-String
+          Write-Output $output
+          if (-not (Test-Path /tmp/wrapper-out-ps/sample.pdf)) { throw 'no PDF produced' }
+          if (-not $output.Contains('/tmp/wrapper-out-ps/sample.pdf')) { throw 'host path not translated back' }
+          if ($output -match '/mnt/extra-') { throw 'wrapper leaked a container path into its output' }
+          Remove-Item -Recurse -Force /tmp/wrapper-out-ps
+
+      # PowerShell hands a script parameter the pattern verbatim instead of
+      # expanding it, so unlike the bash wrapper this one does its own globbing.
+      - name: Host wrapper (PowerShell) - expands a wildcard input itself
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path /tmp/wrapper-glob | Out-Null
+          & ./scripts/publish-md-pdf.ps1 -OutputDir /tmp/wrapper-glob sample*.md
+          $pdfs = @(Get-ChildItem /tmp/wrapper-glob -Filter *.pdf)
+          if ($pdfs.Count -ne 2) { throw "expected 2 PDFs from sample*.md, got $($pdfs.Count)" }
+          # A wildcard matching several files can't share one output name.
+          & ./scripts/publish-md-pdf.ps1 -OutputName one sample*.md
+          if ($LASTEXITCODE -eq 0) { throw '-OutputName with a multi-file wildcard should have failed' }
+          Remove-Item -Recurse -Force /tmp/wrapper-glob
+          # GitHub's pwsh shell exits with the trailing $LASTEXITCODE, which the
+          # deliberate failure above left at 1.
+          exit 0
+
+      - name: Host wrappers - reject --css-file with a non-pdf format
+        shell: bash
+        run: |
+          if scripts/publish-md-pdf.sh --format confluence --css-file publish-md-pdf.css sample.md; then
+            echo "ERROR: bash wrapper should have rejected --css-file with --format confluence"
+            exit 1
+          fi
+          if pwsh -File scripts/publish-md-pdf.ps1 -Format confluence -CssFile publish-md-pdf.css sample.md; then
+            echo "ERROR: PowerShell wrapper should have rejected -CssFile with -Format confluence"
+            exit 1
+          fi
+
       # Everything below exercises the "import a Confluence page by URL" feature
       # (issue #10) against a local nginx mock -- no real Confluence Cloud
       # instance or credentials involved. Both containers use --network host so

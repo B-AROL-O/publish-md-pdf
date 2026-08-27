@@ -98,6 +98,89 @@ code block instead of failing loudly.
 An input starting with `http://` or `https://` is fetched as a Confluence Cloud page instead of
 being read as a file — see [Importing a Confluence page by URL](#importing-a-confluence-page-by-url).
 
+### As a host-side helper script
+
+The `docker run` line above needs a bind mount, a `--user` flag, and a `$PWD` that the container can
+actually see — which is friction on any host, and more so on Windows, where `$PWD` quoting and
+`C:\`-style paths don't map onto it cleanly. Two ready-made wrappers in [scripts/](scripts/) do that
+part for you, so a conversion is a single command:
+
+| Script                                                     | For                                  |
+| ---------------------------------------------------------- | ------------------------------------ |
+| [`scripts/publish-md-pdf.ps1`](scripts/publish-md-pdf.ps1) | PowerShell — Windows, macOS or Linux |
+| [`scripts/publish-md-pdf.sh`](scripts/publish-md-pdf.sh)   | Bash — Linux, macOS, WSL, Git Bash   |
+
+Both need only Docker (on Windows, [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/)
+with the WSL 2 backend); they pull the image on first use, so no local pandoc or WeasyPrint install
+is required. Neither is part of the image — they're meant to be **copied into the repository whose
+documents you convert**, as `scripts/publish-md-pdf.sh` / `scripts/publish-md-pdf.ps1`.
+
+```powershell
+# Windows PowerShell: report.md -> report.pdf, in the current directory
+.\scripts\publish-md-pdf.ps1 report.md
+
+# Several files at once, into a subdirectory
+.\scripts\publish-md-pdf.ps1 -OutputDir dist docs\*.md
+
+# Markdown -> Confluence Storage Format, under a chosen name
+.\scripts\publish-md-pdf.ps1 -Format confluence -OutputName release-notes report.md
+
+# Import a Confluence Cloud page as Markdown
+$env:CONFLUENCE_EMAIL = 'you@example.com'
+$env:CONFLUENCE_API_TOKEN = 'your-api-token'
+.\scripts\publish-md-pdf.ps1 https://your-site.atlassian.net/wiki/x/AbCdEf
+```
+
+```bash
+# The bash wrapper takes the image's own flag names, unchanged
+scripts/publish-md-pdf.sh --output-dir dist docs/*.md
+scripts/publish-md-pdf.sh --format confluence --output-name release-notes report.md
+```
+
+The PowerShell parameters are the same flags in PowerShell spelling, so `Get-Help` and tab
+completion work:
+
+| PowerShell       | CLI / Bash wrapper |
+| ---------------- | ------------------ |
+| `-Format`        | `--format`         |
+| `-OutputDir`     | `--output-dir`     |
+| `-OutputName`    | `--output-name`    |
+| `-CssFile`       | `--css-file`       |
+| `-NoAttachments` | `--no-attachments` |
+
+What the wrappers add on top of a bare `docker run`:
+
+- **Path translation.** `$PWD` is bind-mounted at `/workspace`; any input file, output directory or
+  style sheet living outside `$PWD` gets its own extra mount automatically. The paths in the tool's
+  own `INFO:`/`ERROR:` output are translated back to host paths, so nothing prints `/workspace/…`.
+- **File ownership.** On Linux and macOS the container is run as the calling user with `HOME=/tmp`,
+  so output isn't root-owned and Mermaid diagrams still render (see
+  [As a CLI (via Docker)](#as-a-cli-via-docker) for why both are needed). Docker Desktop on Windows
+  already maps ownership back, so neither flag is used there.
+- **Credential forwarding.** `CONFLUENCE_EMAIL` and `CONFLUENCE_API_TOKEN` are passed _by name_
+  (`-e CONFLUENCE_EMAIL`), never as `-e VAR=value`, so the API token can't be read out of the
+  process list. `ATLASSIAN_EMAIL` / `ATLASSIAN_API_TOKEN` are accepted as aliases.
+- **Early validation.** A missing file, a wrong extension for the chosen `--format`, or `--css-file`
+  with a non-`pdf` format fails on the host, before a container is started.
+
+Set `PUBLISH_MD_PDF_IMAGE` to override the image both wrappers use (default
+`ghcr.io/b-arol-o/publish-md-pdf:v2`) — useful for pinning an exact version, or for testing a
+locally built image. Consider pinning it to a released tag in a repository you want reproducible.
+
+On Windows, PowerShell may refuse to run a script it considers downloaded. Either allow local
+scripts once, per user:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+Unblock-File .\scripts\publish-md-pdf.ps1
+```
+
+or bypass the policy for a single invocation, without changing any setting:
+
+```powershell
+pwsh -ExecutionPolicy Bypass -File .\scripts\publish-md-pdf.ps1 report.md
+```
+
 ### As a GitHub Action
 
 ```yaml

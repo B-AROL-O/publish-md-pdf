@@ -102,6 +102,34 @@ adding a format means adding a module plus one row to the `case "$format"` block
   `confluence_safe_basename` (in `lib/common.sh`) sanitizes an attachment's title before it's used
   as a filename, since that title is server-controlled text this tool writes straight to disk.
 
+### Host-side wrappers under `scripts/`
+
+`scripts/publish-md-pdf.sh` and `scripts/publish-md-pdf.ps1` are _host_ wrappers around
+`docker run`, and are not part of the image (the `Dockerfile`'s `COPY` lines are explicit, so
+nothing under `scripts/` reaches it). Beware the basename collision: the root
+`publish-md-pdf.sh` runs _inside_ the container and is the real entry point, while
+`scripts/publish-md-pdf.sh` runs on the host and only ever shells out to `docker run`. They share
+no code, and the wrappers deliberately duplicate a little of the main script's validation so an
+obvious mistake fails before a container starts.
+
+The two wrappers are mirror images of each other and must stay that way — same flags (in Bash and
+PowerShell spelling respectively), same defaults, same errors. Three things in them are
+load-bearing rather than incidental:
+
+- Host paths are translated into the container's view: `$PWD` is bind-mounted at `/workspace`, and
+  anything outside it gets `/mnt/extra-N`. The image's `INFO:`/`ERROR:` output is then translated
+  back, highest `N` first, so `/mnt/extra-1` can't eat the prefix of `/mnt/extra-10`.
+- Confluence credentials are forwarded **by name** (`-e CONFLUENCE_EMAIL`), never as
+  `-e VAR=value`, which would put the API token in the process list.
+- `--user`/`HOME=/tmp` are added only on a non-Windows host: Docker Desktop already maps ownership
+  back, and `id -u` doesn't exist there. `HOME=/tmp` is what keeps Mermaid rendering working under
+  a UID with no `/etc/passwd` entry — see the same note in `README.md`.
+
+They're documented under "As a host-side helper script" in `README.md` and meant to be copied into
+a documentation repository, so a change here is a change other repositories will copy. The CI
+steps named "Host wrapper …" cover both against the locally built image; `PUBLISH_MD_PDF_IMAGE`
+overrides the tag they run.
+
 Two scripts, `md-to-confluence.sh` and `confluence-to-md.sh`, are deprecated v1 compatibility
 shims kept only so `docker run --entrypoint ...` invocations from before the v2 `--format` flag
 still work; they forward to `publish-md-pdf.sh --format ...` and print a deprecation warning on
