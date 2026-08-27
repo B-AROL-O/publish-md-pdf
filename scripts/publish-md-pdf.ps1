@@ -100,6 +100,15 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
+# 'docker' being on PATH doesn't mean the daemon behind it is reachable (Docker
+# Desktop not started, the service stopped, ...); without this, that case falls
+# through to whatever raw error the eventual 'docker run' happens to print.
+docker info *> $null
+if ($LASTEXITCODE -ne 0) {
+    Write-ErrorLine "ERROR: Docker is installed, but the daemon isn't running (or not reachable). Start Docker Desktop and try again."
+    exit 1
+}
+
 # Which format is in effect decides what the file inputs must look like. The
 # image applies the same default - pdf, unless every input is a URL, in which
 # case the page's own Markdown - so only an explicit -Format is passed on.

@@ -23,6 +23,42 @@ jobs:
         with:
           persist-credentials: false
 
+      # Runs before anything else needs the daemon, so this stop/start bracket
+      # doesn't collide with any other step in the job.
+      - name: Host wrappers - detect a stopped Docker daemon
+        run: |
+          sudo systemctl stop docker.socket docker.service
+
+          if scripts/publish-md-pdf.sh sample.md >bash-daemon-down.txt 2>&1; then
+            echo "ERROR: bash wrapper should have failed with the daemon stopped"
+            cat bash-daemon-down.txt
+            exit 1
+          fi
+          grep -q "daemon isn't running" bash-daemon-down.txt
+          rm -f bash-daemon-down.txt
+
+          if pwsh -File scripts/publish-md-pdf.ps1 sample.md >ps-daemon-down.txt 2>&1; then
+            echo "ERROR: PowerShell wrapper should have failed with the daemon stopped"
+            cat ps-daemon-down.txt
+            exit 1
+          fi
+          grep -q "daemon isn't running" ps-daemon-down.txt
+          rm -f ps-daemon-down.txt
+
+          sudo systemctl start docker.service
+          ready=0
+          for _ in {1..20}; do
+            docker info >/dev/null 2>&1 && {
+              ready=1
+              break
+            }
+            sleep 0.5
+          done
+          [ "$ready" -eq 1 ] || {
+            echo "ERROR: Docker daemon never came back up"
+            exit 1
+          }
+
       # Tagged to match runs.image in action.yml, so the "Action self-test"
       # steps below resolve to this locally built image instead of pulling
       # the published one.

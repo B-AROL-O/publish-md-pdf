@@ -160,6 +160,14 @@ if ! command -v docker >/dev/null 2>&1; then
 	exit 1
 fi
 
+# 'docker' being on PATH doesn't mean the daemon behind it is reachable (Docker
+# Desktop not started, the service stopped, ...); without this, that case falls
+# through to whatever raw error the eventual 'docker run' happens to print.
+if ! docker info >/dev/null 2>&1; then
+	echo "ERROR: Docker is installed, but the daemon isn't running (or not reachable). Start Docker Desktop (or the Docker service) and try again."
+	exit 1
+fi
+
 # The image reads Confluence credentials from the environment only, so they are
 # forwarded by name: passing them as -e VAR=value would expose the API token in
 # the process list. ATLASSIAN_* is accepted as an alias for either.
