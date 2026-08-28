@@ -32,13 +32,18 @@ convert_md_emit_code_block() {
 # understands, and each ac:task-list into a plain GFM-style checkbox list
 # (see convert_md_emit_task_list). Mirrors convert_confluence_code_blocks():
 # the opening tag and the first content line share a line, and the closing
-# tags are appended directly to the last content line. ac:task-list gets the
-# same cross-line buffering as the code macro, rather than the single-line
-# scan convert_md_rewrite_objects uses for images/links/mentions/dates/
-# emoticons, because unlike those -- always inline content sharing a line
-# with surrounding paragraph text -- a task list is block-level, and nothing
-# rules out Confluence formatting each of its ac:task children on its own
-# line the way it already does for other block constructs.
+# tags are appended directly to the last content line -- true of the code
+# macro's *opening* tag too (it's matched with a "^" anchor deliberately,
+# since a fenced code block is never preceded by other content on its line),
+# but NOT of ac:task-list's: verified against a real Confluence page, its
+# opening tag was glued straight onto the end of a heading's closing tag with
+# no newline in between. So unlike the code macro, ac:task-list is looked for
+# as a substring anywhere in the line, the same way convert_md_rewrite_objects
+# already does for images/links/mentions/dates/emoticons -- but still gets
+# its own cross-line buffering once found, rather than being handed to that
+# single-line scanner outright, because nothing rules out Confluence
+# formatting each of its ac:task children on its own line, the way it
+# already does for other block constructs.
 convert_md_restore_code_blocks() {
 	local in_code=0 lang="" buf="" line rest
 	local in_tasklist=0 tasklist_buf=""
@@ -76,23 +81,37 @@ convert_md_restore_code_blocks() {
 				fi
 				continue
 			fi
-			# Like the code macro above, an ac:task-list is assumed to start
-			# at the beginning of its own line -- a block construct, never
-			# sharing a line with preceding paragraph text.
-			if [[ "$line" =~ ^\<ac:task-list ]]; then
-				if [[ "$line" == *"</ac:task-list>"* ]]; then
-					convert_md_emit_task_list "${line%%"</ac:task-list>"*}</ac:task-list>"
-					rest="${line#*"</ac:task-list>"}"
+			# Unlike the code macro above, an ac:task-list is not assumed to
+			# start its own line: verified against a real Confluence page,
+			# where it's glued straight onto the end of whatever came before
+			# it (a heading's closing tag, in that case) with no newline in
+			# between -- the same "everything shares a line" shape this
+			# module already has to handle for images/links/mentions/dates/
+			# emoticons, just for a block construct instead of an inline one.
+			if [[ "$line" == *"<ac:task-list"* ]]; then
+				prefix="${line%%"<ac:task-list"*}"
+				tail="<ac:task-list${line#*"<ac:task-list"}"
+				if [[ "$prefix" == *"<ac:image"* || "$prefix" == *"<ac:link"* ||
+					"$prefix" == *"<ac:emoticon"* || "$prefix" == *"<time"* ]]; then
+					prefix="$(convert_md_rewrite_objects "$prefix")"
+				fi
+				if [[ "$tail" == *"</ac:task-list>"* ]]; then
+					printf '%s' "$prefix"
+					convert_md_emit_task_list "${tail%%"</ac:task-list>"*}</ac:task-list>"
+					rest="${tail#*"</ac:task-list>"}"
 					if [ -n "$rest" ]; then
 						if [[ "$rest" == *"<ac:image"* || "$rest" == *"<ac:link"* ||
 							"$rest" == *"<ac:emoticon"* || "$rest" == *"<time"* ]]; then
 							rest="$(convert_md_rewrite_objects "$rest")"
 						fi
 						printf '%s\n' "$rest"
+					else
+						printf '\n'
 					fi
 				else
+					printf '%s\n' "$prefix"
 					in_tasklist=1
-					tasklist_buf="$line"
+					tasklist_buf="$tail"
 				fi
 				continue
 			fi

@@ -23,8 +23,7 @@
 <p><ac:emoticon ac:name="tick" ac:emoji-shortname=":white_check_mark:" ac:emoji-id="2705" ac:emoji-fallback="&#9989;" /> done</p>
 <h2>An emoji picked from the picker</h2>
 <p><ac:emoticon ac:name="whatsit" ac:emoji-shortname=":spiral_calendar_pad:" ac:emoji-id="1f5d3" ac:emoji-fallback="\uD83D\uDDD3" /> scheduled</p>
-<h2>A task list</h2>
-<ac:task-list>
+<h2>A task list</h2><ac:task-list ac:task-list-id="463e957a-e7fb-4134-9229-753d7f653cfc">
 <ac:task>
 <ac:task-id>1</ac:task-id>
 <ac:task-uuid>aaaa1111-bbbb-2222-cccc-333344445555</ac:task-uuid>
