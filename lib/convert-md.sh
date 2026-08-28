@@ -81,19 +81,99 @@ convert_md_attr() {
 	fi
 }
 
-# The same, but left exactly as the storage format wrote it. Storage format is
-# XHTML and the generated fragment below is HTML, and the two share one
-# escaping scheme, so an attribute value that is going straight into HTML *text*
-# rather than being compared against unescaped JSON is correct untouched -- and
-# only untouched. ac:emoji-fallback is the reason this exists: it holds a
-# numeric character reference ("&#9989;"), which xml_unescape_attr deliberately
-# does not decode, so passing it through raw lets pandoc's HTML reader resolve
-# it while unescaping first would emit a broken "&" into the middle of the text.
+# The same, but left exactly as the storage format wrote it, i.e. not run
+# through xml_unescape_attr. ac:emoji-fallback is the reason this exists: it
+# can hold a raw HTML numeric character reference ("&#9989;"), and unescaping
+# that first would turn the "&" into a literal one, breaking the reference
+# pandoc's HTML reader would otherwise have resolved on its own.
 convert_md_attr_verbatim() {
 	local hay="$1" attr="$2"
 	if [[ "$hay" =~ $attr=\"([^\"]*)\" ]]; then
 		printf '%s' "${BASH_REMATCH[1]}"
 	fi
+}
+
+# Decodes JavaScript/JSON-style "\uXXXX" unicode escapes -- including a
+# surrogate pair, written as two consecutive escapes -- into the UTF-8 text
+# they stand for. Any other text, including a real character or an HTML
+# numeric reference, passes through untouched.
+#
+# This exists because ac:emoji-fallback does not reliably hold either of the
+# two things its name suggests (a plain character, or an HTML reference
+# pandoc would decode) -- verified against a real Confluence Cloud page,
+# where an emoji inserted via the emoji picker (not a legacy ac:name
+# emoticon) instead put the *literal nine-to-sixteen ASCII characters* of a
+# JS escape sequence in that attribute, e.g. "🗓" for a calendar
+# emoji outside the Basic Multilingual Plane -- which is most emoji. Neither
+# XML unescaping nor pandoc's HTML reader has any idea what to do with a raw
+# "\u"; left alone, it survives into the rendered document as exactly those
+# literal backslash-u characters, which is what the fallback exists to
+# prevent.
+convert_md_decode_js_unicode_escapes() {
+	local text="$1" out="" unit high low cp
+
+	while [[ "$text" =~ \\u([0-9A-Fa-f]{4}) ]]; do
+		out+="${text%%"${BASH_REMATCH[0]}"*}"
+		unit="${BASH_REMATCH[1]}"
+		text="${text#*"${BASH_REMATCH[0]}"}"
+
+		# A high surrogate (D800-DBFF) only means something paired with an
+		# immediately following low surrogate (DC00-DFFF); an unpaired one is
+		# malformed input and is passed through as the sentinel U+FFFD rather
+		# than decoded into a bogus codepoint.
+		if [[ "$unit" =~ ^[Dd][89ABab] ]]; then
+			if [[ "$text" =~ ^\\u([Dd][C-Fc-f][0-9A-Fa-f]{2}) ]]; then
+				high="0x$unit"
+				low="0x${BASH_REMATCH[1]}"
+				text="${text#*"${BASH_REMATCH[0]}"}"
+				cp=$((0x10000 + ((high - 0xD800) << 10) + (low - 0xDC00)))
+			else
+				cp=0xFFFD
+			fi
+		else
+			cp="0x$unit"
+		fi
+
+		out+="$(convert_md_utf8_char "$cp")"
+	done
+
+	printf '%s' "$out$text"
+}
+
+# Encodes one Unicode codepoint (numeric, e.g. 0x1f5d3) as its UTF-8 byte
+# sequence.
+#
+# Not done via bash's own \u/\U printf escapes: those depend on the
+# process's locale to know how to pack a codepoint into multiple bytes, and
+# this Docker image (like most minimal ones) runs with no locale configured
+# at all -- verified directly against it, where printf '%b' "\\U0001f5d3" in
+# the plain POSIX/C locale it defaults to doesn't decode the escape at all,
+# it just prints the literal characters "\U0001F5D3" back out, i.e. exactly
+# the bug this function exists to fix, one level down. \xHH, by contrast, is
+# bash writing a raw byte value with no locale-aware interpretation involved,
+# so encoding the UTF-8 bytes by hand and feeding them to printf '%b' as
+# literal \xHH escapes works the same regardless of locale.
+convert_md_utf8_char() {
+	local cp="$1" out
+	if ((cp < 0x80)); then
+		printf -v out '\\x%02x' "$cp"
+	elif ((cp < 0x800)); then
+		printf -v out '\\x%02x\\x%02x' \
+			$((0xC0 | (cp >> 6))) \
+			$((0x80 | (cp & 0x3F)))
+	elif ((cp < 0x10000)); then
+		printf -v out '\\x%02x\\x%02x\\x%02x' \
+			$((0xE0 | (cp >> 12))) \
+			$((0x80 | ((cp >> 6) & 0x3F))) \
+			$((0x80 | (cp & 0x3F)))
+	else
+		printf -v out '\\x%02x\\x%02x\\x%02x\\x%02x' \
+			$((0xF0 | (cp >> 18))) \
+			$((0x80 | ((cp >> 12) & 0x3F))) \
+			$((0x80 | ((cp >> 6) & 0x3F))) \
+			$((0x80 | (cp & 0x3F)))
+	fi
+	printf '%b' "$out"
 }
 
 # The raw inner XHTML of the first <NAME ...>...</NAME> child in $1, or
@@ -279,12 +359,15 @@ convert_md_emit_time() {
 
 # Renders an <ac:emoticon> as the character it stands for.
 #
-# Modern Confluence writes the character itself in ac:emoji-fallback, so that
-# attribute is authoritative when present and is passed through verbatim (see
-# convert_md_attr_verbatim). The ac:name table below is the legacy emoticon set,
-# which predates emoji in Confluence and has no fallback attribute at all. An
-# emoticon matching neither is left untouched -- i.e. dropped by pandoc, as
-# before -- rather than guessed at.
+# Modern Confluence writes the character in ac:emoji-fallback, in one of
+# three shapes seen in practice: the character itself, an HTML numeric
+# reference, or (astral-plane emoji especially) a JS-style "\uXXXX" escape --
+# see convert_md_decode_js_unicode_escapes for why that third shape needs its
+# own decoding. Whichever shape it's in, that attribute is authoritative when
+# present. The ac:name table below is the legacy emoticon set, which predates
+# emoji in Confluence and has no fallback attribute at all. An emoticon
+# matching neither is left untouched -- i.e. dropped by pandoc, as before --
+# rather than guessed at.
 #
 # Note this needs a font with emoji coverage to survive to the rendered PDF:
 # the Docker image installs fonts-noto-color-emoji for exactly this reason, and
@@ -295,7 +378,7 @@ convert_md_emit_emoticon() {
 
 	fallback="$(convert_md_attr_verbatim "$elem" 'ac:emoji-fallback')"
 	if [ -n "$fallback" ]; then
-		printf '%s' "$fallback"
+		convert_md_decode_js_unicode_escapes "$fallback"
 		return 0
 	fi
 

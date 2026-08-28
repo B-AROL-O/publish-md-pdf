@@ -410,11 +410,15 @@ jobs:
           # survive as written, not be rewritten or have its attachment resolved.
           grep -q '<ri:attachment ri:filename="not-really-an-image.png" />' page.md
           # The mention resolved to a real name via /rest/api/user, the date
-          # lozenge became its plain ISO date, and the emoji rendered as the
-          # character its ac:emoji-fallback names.
+          # lozenge became its plain ISO date, and both emoji shapes a real
+          # Confluence page uses for ac:emoji-fallback rendered as the actual
+          # character: a plain HTML numeric reference ("&#9989;"), and (the
+          # shape an emoji-picker insertion actually uses, verified against a
+          # real page) a literal JS-style "🗓" surrogate pair.
           grep -q 'Reviewed by @Jane Reviewer' page.md
           grep -q '^2026-08-27$' page.md
           grep -q '✅ done' page.md
+          grep -q '🗓 scheduled' page.md
 
       - name: Confluence URL import - attachment download sanitizes a hostile filename
         run: |

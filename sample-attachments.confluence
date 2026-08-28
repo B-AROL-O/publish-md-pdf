@@ -21,3 +21,5 @@
 <p><time datetime="2026-08-27" /></p>
 <h2>An emoji reaction</h2>
 <p><ac:emoticon ac:name="tick" ac:emoji-shortname=":white_check_mark:" ac:emoji-id="2705" ac:emoji-fallback="&#9989;" /> done</p>
+<h2>An emoji picked from the picker</h2>
+<p><ac:emoticon ac:name="whatsit" ac:emoji-shortname=":spiral_calendar_pad:" ac:emoji-id="1f5d3" ac:emoji-fallback="\uD83D\uDDD3" /> scheduled</p>
