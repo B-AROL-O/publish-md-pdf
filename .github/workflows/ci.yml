@@ -95,7 +95,10 @@ jobs:
           # into the page body pandoc generated it in.
           grep -q '<li>☒ Render Markdown to HTML with pandoc</li>' sample.confluence
           grep -q '<li>☐ Render HTML to PDF with WeasyPrint</li>' sample.confluence
-          ! grep -q '<input' sample.confluence
+          if grep -q '<input' sample.confluence; then
+            echo "ERROR: raw <input> HTML leaked into sample.confluence"
+            exit 1
+          fi
 
           docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
             --format md --output-name sample-roundtrip sample.confluence
