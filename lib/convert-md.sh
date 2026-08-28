@@ -29,13 +29,46 @@ convert_md_emit_code_block() {
 
 # Streams a Confluence Storage Format fragment, rewriting each "code"
 # structured macro back into a plain <pre><code> block pandoc's HTML reader
-# understands. Mirrors convert_confluence_code_blocks(): the opening tag and
-# the first content line share a line, and the closing tags are appended
-# directly to the last content line.
+# understands, and each ac:task-list into a plain GFM-style checkbox list
+# (see convert_md_emit_task_list). Mirrors convert_confluence_code_blocks():
+# the opening tag and the first content line share a line, and the closing
+# tags are appended directly to the last content line -- true of the code
+# macro's *opening* tag too (it's matched with a "^" anchor deliberately,
+# since a fenced code block is never preceded by other content on its line),
+# but NOT of ac:task-list's: verified against a real Confluence page, its
+# opening tag was glued straight onto the end of a heading's closing tag with
+# no newline in between. So unlike the code macro, ac:task-list is looked for
+# as a substring anywhere in the line, the same way convert_md_rewrite_objects
+# already does for images/links/mentions/dates/emoticons -- but still gets
+# its own cross-line buffering once found, rather than being handed to that
+# single-line scanner outright, because nothing rules out Confluence
+# formatting each of its ac:task children on its own line, the way it
+# already does for other block constructs.
 convert_md_restore_code_blocks() {
 	local in_code=0 lang="" buf="" line rest
+	local in_tasklist=0 tasklist_buf=""
 
 	while IFS='' read -r line || [ -n "$line" ]; do
+		if [ "$in_tasklist" -eq 1 ]; then
+			if [[ "$line" == *"</ac:task-list>"* ]]; then
+				tasklist_buf+=$'\n'"${line%%"</ac:task-list>"*}</ac:task-list>"
+				convert_md_emit_task_list "$tasklist_buf"
+				in_tasklist=0
+				tasklist_buf=""
+				rest="${line#*"</ac:task-list>"}"
+				if [ -n "$rest" ]; then
+					if [[ "$rest" == *"<ac:image"* || "$rest" == *"<ac:link"* ||
+						"$rest" == *"<ac:emoticon"* || "$rest" == *"<time"* ]]; then
+						rest="$(convert_md_rewrite_objects "$rest")"
+					fi
+					printf '%s\n' "$rest"
+				fi
+			else
+				tasklist_buf+=$'\n'"$line"
+			fi
+			continue
+		fi
+
 		if [ "$in_code" -eq 0 ]; then
 			if [[ "$line" =~ ^\<ac:structured-macro\ ac:name=\"code\"\ ac:schema-version=\"1\"\>(\<ac:parameter\ ac:name=\"language\"\>([^\<]*)\</ac:parameter\>)?\<ac:plain-text-body\>\<!\[CDATA\[(.*)$ ]]; then
 				lang="${BASH_REMATCH[2]}"
@@ -45,6 +78,40 @@ convert_md_restore_code_blocks() {
 				else
 					in_code=1
 					buf="$rest"
+				fi
+				continue
+			fi
+			# Unlike the code macro above, an ac:task-list is not assumed to
+			# start its own line: verified against a real Confluence page,
+			# where it's glued straight onto the end of whatever came before
+			# it (a heading's closing tag, in that case) with no newline in
+			# between -- the same "everything shares a line" shape this
+			# module already has to handle for images/links/mentions/dates/
+			# emoticons, just for a block construct instead of an inline one.
+			if [[ "$line" == *"<ac:task-list"* ]]; then
+				prefix="${line%%"<ac:task-list"*}"
+				tail="<ac:task-list${line#*"<ac:task-list"}"
+				if [[ "$prefix" == *"<ac:image"* || "$prefix" == *"<ac:link"* ||
+					"$prefix" == *"<ac:emoticon"* || "$prefix" == *"<time"* ]]; then
+					prefix="$(convert_md_rewrite_objects "$prefix")"
+				fi
+				if [[ "$tail" == *"</ac:task-list>"* ]]; then
+					printf '%s' "$prefix"
+					convert_md_emit_task_list "${tail%%"</ac:task-list>"*}</ac:task-list>"
+					rest="${tail#*"</ac:task-list>"}"
+					if [ -n "$rest" ]; then
+						if [[ "$rest" == *"<ac:image"* || "$rest" == *"<ac:link"* ||
+							"$rest" == *"<ac:emoticon"* || "$rest" == *"<time"* ]]; then
+							rest="$(convert_md_rewrite_objects "$rest")"
+						fi
+						printf '%s\n' "$rest"
+					else
+						printf '\n'
+					fi
+				else
+					printf '%s\n' "$prefix"
+					in_tasklist=1
+					tasklist_buf="$tail"
 				fi
 				continue
 			fi
@@ -417,6 +484,77 @@ convert_md_emit_emoticon() {
 # before this existed.
 convert_md_is_empty_element() {
 	[[ "$1" =~ /[[:space:]]*$ ]]
+}
+
+# An <ac:task-body>'s inner XHTML, ready for pandoc: any nested mention,
+# image, or attachment link resolved via convert_md_rewrite_objects, same as
+# in surrounding paragraph text.
+#
+# Confluence wraps the body in a <span class="placeholder-inline-tasks">
+# purely for its own editor's styling; it carries no meaning of its own, so
+# it's unwrapped rather than carried into the output as inert markup. Not
+# every export includes it, so a body without that wrapper is left as-is.
+convert_md_task_body_text() {
+	local body="$1" wrapper='<span class="placeholder-inline-tasks">'
+	case "$body" in
+	"$wrapper"*'</span>')
+		body="${body#"$wrapper"}"
+		body="${body%</span>}"
+		;;
+	esac
+	convert_md_rewrite_objects "$body"
+}
+
+# Renders one <ac:task-list>...</ac:task-list> span (the storage format for
+# a real Confluence checkbox list) as a plain <ul><li>☐/☒ ...</li></ul>,
+# the same convention lib/convert-confluence.sh already uses for this
+# tool's own checkboxes in the other direction: pandoc's gfm writer, on
+# seeing a list item whose text starts with "☐ " or "☒ ", emits it as
+# "- [ ]"/"- [x]" on its own -- verified directly against pandoc 2.17.1.1,
+# the version Debian bookworm (this image's own base) actually ships.
+#
+# This is not what pandoc's docs describe as the task-list mechanism, and
+# it is deliberately not <li><input type="checkbox" .../>...</li> (the shape
+# a modern pandoc's HTML *reader* turns back into "- [ ]"): that reader
+# support doesn't exist yet in 2.17.1.1 -- verified by round-tripping
+# pandoc's own generated task-list HTML back through itself and getting a
+# plain, unchecked bullet list out, silently losing every checkbox.
+#
+# Without this function at all, pandoc's HTML reader treats ac:task-list/
+# ac:task/ac:task-id/ac:task-uuid/ac:task-status/ac:task-body as meaningless
+# unknown elements and keeps only their flattened text content -- which is
+# why a real task used to come out as literally "199 c6bc1f902bb2 incomplete
+# Attendee name Do the thing", the task's internal id, uuid and status
+# leaking into the document as if they were part of it.
+convert_md_emit_task_list() {
+	local blob="$1" inner tasks_html="" task_elem rest status body marker
+
+	inner="${blob#*<ac:task-list}"
+	inner="${inner#*>}"
+	inner="${inner%</ac:task-list>*}"
+
+	while [[ "$inner" == *"<ac:task>"* ]]; do
+		rest="${inner#*<ac:task>}"
+		[[ "$rest" == *"</ac:task>"* ]] || break
+		task_elem="${rest%%</ac:task>*}"
+		inner="${rest#*</ac:task>}"
+
+		status="$(convert_md_element_body "$task_elem" 'ac:task-status')"
+		body="$(convert_md_task_body_text "$(convert_md_element_body "$task_elem" 'ac:task-body')")"
+		# A task list buffered across several source lines (see
+		# convert_md_restore_code_blocks) carries real newlines here; the task
+		# body is inline content, so collapsing them to spaces is whitespace
+		# normalization, not data loss.
+		body="${body//$'\n'/ }"
+
+		marker="☐"
+		[ "$status" = "complete" ] && marker="☒"
+		tasks_html+="<li>$marker $body</li>"
+	done
+
+	if [ -n "$tasks_html" ]; then
+		printf '<ul>%s</ul>\n' "$tasks_html"
+	fi
 }
 
 # Rewrites the storage-format elements that carry visible content -- images,

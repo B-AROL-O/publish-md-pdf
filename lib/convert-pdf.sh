@@ -42,9 +42,11 @@ convert_pdf_file() {
 	tmp_html="$(mktemp --suffix=.html)"
 
 	# pandoc renders GFM task-list checkboxes as native <input type="checkbox">
-	# elements, whose checked/unchecked appearance WeasyPrint cannot restyle
-	# (it always fills a checked box solid black). Render to HTML first, then
-	# swap those inputs for <span> markers styled by publish-md-pdf.css.
+	# elements. WeasyPrint doesn't give a form control any default box to
+	# begin with, so left alone one renders as nothing visible at all --
+	# not even an unstyled checkbox, just the item's text with no marker in
+	# front of it. Render to HTML first, then swap those inputs for <span>
+	# markers styled by publish-md-pdf.css.
 	#
 	# --no-highlight disables pandoc's syntax highlighting. Its default
 	# highlighting CSS gives each code line a hanging indent
@@ -68,9 +70,15 @@ convert_pdf_file() {
 	fi
 	echo "$pandoc_output" | grep -v "Defaulting to .* as the title\|To specify a title," || true
 
+	# pandoc always marks a task-list checkbox disabled="" (it's never meant to
+	# be interactive in rendered output), on both the checked and unchecked
+	# shape -- verified directly against pandoc 2.17.1.1, this image's own
+	# base. The checked pattern has to run first: it's the more specific of
+	# the two, and the unchecked one would otherwise match its leading
+	# "disabled=\"\" " and leave a dangling " checked=\"\" />" behind.
 	sed -i \
-		-e 's/<input type="checkbox" checked="" \/>/<span class="task-checkbox checked"><\/span>/g' \
-		-e 's/<input type="checkbox" \/>/<span class="task-checkbox"><\/span>/g' \
+		-e 's/<input type="checkbox" disabled="" checked="" \/>/<span class="task-checkbox checked"><\/span>/g' \
+		-e 's/<input type="checkbox" disabled="" \/>/<span class="task-checkbox"><\/span>/g' \
 		"$tmp_html"
 
 	if ! weasyprint_output=$(weasyprint "$tmp_html" "$pdf_file" \

@@ -90,10 +90,23 @@ jobs:
           docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
             --format confluence sample.md
           test -s sample.confluence
+          # Checkboxes became the ☐/☒ characters Confluence Storage Format
+          # has no native element for, not raw <input> HTML leaking straight
+          # into the page body pandoc generated it in.
+          grep -q '<li>☒ Render Markdown to HTML with pandoc</li>' sample.confluence
+          grep -q '<li>☐ Render HTML to PDF with WeasyPrint</li>' sample.confluence
+          if grep -q '<input' sample.confluence; then
+            echo "ERROR: raw <input> HTML leaked into sample.confluence"
+            exit 1
+          fi
 
           docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
             --format md --output-name sample-roundtrip sample.confluence
           test -s sample-roundtrip.md
+          # And converting back turned them into GFM task-list syntax again,
+          # not literal "☒ "/"☐ " text.
+          grep -q '\[x\] Render Markdown to HTML with pandoc' sample-roundtrip.md
+          grep -q '\[ \] Render HTML to PDF with WeasyPrint' sample-roundtrip.md
 
           rm -f sample.confluence sample-roundtrip.md
 
@@ -419,6 +432,13 @@ jobs:
           grep -q '^2026-08-27$' page.md
           grep -q '✅ done' page.md
           grep -q '🗓 scheduled' page.md
+          # A real ac:task-list (distinct from this tool's own ☐/☒ round trip,
+          # see the Task list checks below) became a real GFM task list, with
+          # its internal task-id/task-uuid/task-status dropped rather than
+          # leaking into the text, and the mention inside one task's body
+          # resolved the same way it does in surrounding paragraph text.
+          grep -q '\[ \] @Jane Reviewer Follow up with the team' page.md
+          grep -q '\[x\] Order the new parts' page.md
 
       - name: Confluence URL import - attachment download sanitizes a hostile filename
         run: |
