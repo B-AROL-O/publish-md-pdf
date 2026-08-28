@@ -92,11 +92,28 @@ convert_confluence_file() {
 	# Confluence Storage Format has no native checkbox input element; use the
 	# same ballot-box characters pandoc's own gfm writer recognizes as GFM
 	# task-list markers, so the reverse conversion can turn them straight
-	# back into "- [x]" / "- [ ]" syntax.
+	# back into "- [x]" / "- [ ]" syntax. pandoc always marks a task-list
+	# checkbox disabled="" (checked or not) -- verified directly against
+	# pandoc 2.17.1.1, this image's own base -- so the checked pattern has to
+	# match that too, and has to run first: it's the more specific of the two,
+	# and the unchecked one would otherwise match its leading
+	# "disabled=\"\" " and leave a dangling " checked=\"\" />" as literal text.
 	sed -i \
-		-e 's/<input type="checkbox" checked="" \/>/☒ /g' \
-		-e 's/<input type="checkbox" \/>/☐ /g' \
+		-e 's/<input type="checkbox" disabled="" checked="" \/>/☒ /g' \
+		-e 's/<input type="checkbox" disabled="" \/>/☐ /g' \
 		"$tmp_html"
+
+	# pandoc's own html5 output puts the item's text on the line *after* the
+	# checkbox input, not the same line; once that input is gone, that leaves
+	# a line that's nothing but the ballot-box marker, followed by a separate
+	# line holding the item's text. Reading that back (lib/convert-md.sh) is
+	# exactly the reverse conversion the comment above promises, but pandoc's
+	# marker-recognizing heuristic only fires when the marker and the text
+	# it labels share one line -- verified directly: the same input with this
+	# join removed comes back as literal "☒ Do the thing" text, not "- [x]
+	# Do the thing". Joining them here, once, is simpler than requiring every
+	# consumer of this format to tolerate both shapes.
+	sed -i -E '/[☒☐] $/{N;s/\n//}' "$tmp_html"
 
 	convert_confluence_code_blocks "$tmp_html" >"$out_file"
 	rm -f "$tmp_html"

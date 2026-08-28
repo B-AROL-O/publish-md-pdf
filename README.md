@@ -251,6 +251,7 @@ Known limitations of this conversion (see also [Notes](#notes)):
   fenced one (both are valid Markdown, only the presentation differs).
 - Task-list checkboxes (`- [ ]` / `- [x]`) become the ballot-box characters `☐`/`☒`, since Confluence
   Storage Format has no native checkbox element and this keeps the content readable as plain text.
+  Converting back with `--format md` turns them into `- [ ]` / `- [x]` again.
 - Other Markdown constructs (headings, tables, links, images, blockquotes, emphasis, nested lists) map
   onto their closest plain XHTML equivalent. Images become a plain `<img src="...">`, not Confluence's
   attachment-backed `ac:image` macro, since there's no attachment to point at in a file-only
@@ -372,13 +373,17 @@ installs `fonts-noto-color-emoji` for this. Running `publish-md-pdf.sh` directly
 via the image needs the same (or another emoji-capable) font installed there, or emoji fall back to
 blank space rather than a visible glyph.
 
+A real Confluence checkbox list (`ac:task-list`/`ac:task`) becomes a GFM task list (`- [ ]`/`- [x]`),
+the same as this tool's own Markdown checkboxes; a checked task's `ac:task-status` must read exactly
+`complete` to count as checked. Any `@mention`, image, or attachment link inside a task's text is
+resolved the same way it would be in surrounding paragraph text.
+
 Known limitations, beyond those already listed for [Converting to/from
 Confluence](#converting-tofrom-confluence) — real Confluence pages use macros this tool's storage-to-Markdown
 conversion has never had to handle:
 
 - `ac:link` / `ri:page` (internal links to other Confluence pages) — left as plain text, since there's
   no local file to point at.
-- `ac:task-list` — doesn't become GFM `- [ ]` / `- [x]` task-list syntax.
 - Info/note/warning panels, `ac:layout`, page properties, `ac:structured-macro ac:name="status"`, and
   structured macros other than `code` generally.
 

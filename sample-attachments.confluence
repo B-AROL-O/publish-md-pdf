@@ -23,3 +23,18 @@
 <p><ac:emoticon ac:name="tick" ac:emoji-shortname=":white_check_mark:" ac:emoji-id="2705" ac:emoji-fallback="&#9989;" /> done</p>
 <h2>An emoji picked from the picker</h2>
 <p><ac:emoticon ac:name="whatsit" ac:emoji-shortname=":spiral_calendar_pad:" ac:emoji-id="1f5d3" ac:emoji-fallback="\uD83D\uDDD3" /> scheduled</p>
+<h2>A task list</h2>
+<ac:task-list>
+<ac:task>
+<ac:task-id>1</ac:task-id>
+<ac:task-uuid>aaaa1111-bbbb-2222-cccc-333344445555</ac:task-uuid>
+<ac:task-status>incomplete</ac:task-status>
+<ac:task-body><span class="placeholder-inline-tasks"><ac:link><ri:user ri:account-id="557058:11112222-3333-4444-5555-666677778888" /></ac:link> Follow up with the team</span></ac:task-body>
+</ac:task>
+<ac:task>
+<ac:task-id>2</ac:task-id>
+<ac:task-uuid>ffff6666-7777-8888-9999-000011112222</ac:task-uuid>
+<ac:task-status>complete</ac:task-status>
+<ac:task-body><span class="placeholder-inline-tasks">Order the new parts</span></ac:task-body>
+</ac:task>
+</ac:task-list>
