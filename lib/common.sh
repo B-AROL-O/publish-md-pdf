@@ -43,6 +43,16 @@ CONFLUENCE_ATTACHMENT_PREFIX=""
 # shellcheck disable=SC2034
 declare -A CONFLUENCE_ATTACHMENT_MAP=()
 
+# Confluence-account-id -> display-name for the page's user mentions, filled by
+# lib/fetch-confluence.sh's confluence_fetch_users and read by lib/convert-md.sh.
+#
+# Here for the same reason as the attachment map above: storage format records a
+# mention as nothing but an opaque account id, so the name has to be looked up
+# over the API, yet a .confluence file converted straight off disk never sources
+# the fetch module at all -- it finds this empty and falls back to a placeholder.
+# shellcheck disable=SC2034 # read by lib/convert-md.sh, written by lib/fetch-confluence.sh
+declare -A CONFLUENCE_USER_MAP=()
+
 # Attachment titles are server-controlled text that this tool writes straight
 # to disk, so a title like "../../.ssh/authorized_keys" must not be able to
 # escape the destination directory. Directory components are dropped, the

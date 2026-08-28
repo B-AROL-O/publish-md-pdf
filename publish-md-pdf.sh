@@ -202,9 +202,10 @@ for input_file in "$@"; do
 		slug="$(confluence_slug "$CONFLUENCE_FETCH_TITLE" "$CONFLUENCE_FETCH_PAGE_ID")"
 
 		# Reset per input, so a second page's images can't inherit the first
-		# page's attachment directory.
+		# page's attachment directory, nor its mentions the first page's names.
 		CONFLUENCE_ATTACHMENT_PREFIX=""
 		CONFLUENCE_ATTACHMENT_MAP=()
+		CONFLUENCE_USER_MAP=()
 
 		case "$format" in
 		confluence)
@@ -224,6 +225,11 @@ for input_file in "$@"; do
 		md)
 			out_name="$(resolve_output_name "$slug.confluence" confluence md "$output_name")"
 			out_file="$output_dir/$out_name"
+			# Mentions carry only an account id, so the names come from the API
+			# too. Unlike attachments this writes no files, and --format
+			# confluence needs it no more than it needs the downloads: the
+			# body it writes out keeps the ri:user references as they were.
+			confluence_fetch_users "$CONFLUENCE_FETCH_BASE" "$confluence_tmp"
 			# Attachments land in a directory named after the Markdown file and
 			# are referenced relatively, so the two move together.
 			if [ "$fetch_attachments" -eq 1 ]; then
@@ -244,6 +250,7 @@ for input_file in "$@"; do
 			bridge_dir="$(mktemp -d)"
 			register_cleanup "$bridge_dir"
 			md_tmp="$bridge_dir/page.md"
+			confluence_fetch_users "$CONFLUENCE_FETCH_BASE" "$confluence_tmp"
 			if [ "$fetch_attachments" -eq 1 ]; then
 				CONFLUENCE_ATTACHMENT_PREFIX="assets"
 				confluence_fetch_attachments "$CONFLUENCE_FETCH_BASE" "$CONFLUENCE_FETCH_PAGE_ID" \

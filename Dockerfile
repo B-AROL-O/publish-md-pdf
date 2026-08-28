@@ -6,6 +6,14 @@
 # The equivalent Trivy finding (AVD-DS-0002) is suppressed via .trivyignore for the same reason.
 FROM debian:bookworm-slim
 
+# fonts-noto-color-emoji is a rendering dependency, not a nicety: the only fonts
+# otherwise present are the DejaVu family that weasyprint/chromium pull in, and
+# DejaVu has no glyph for any emoji outside a handful of dingbats. WeasyPrint
+# lays a missing glyph out as blank space rather than a visible box, so without
+# this every emoji in a document -- including the ac:emoticon elements
+# lib/convert-md.sh converts out of a fetched Confluence page -- silently
+# renders as a gap in the PDF. Verified with a real Confluence meeting-notes
+# page whose section headings are all emoji-prefixed.
 # hadolint ignore=DL3008
 RUN DEBIAN_FRONTEND=noninteractive apt-get update \
     && apt-get -qqy install --no-install-recommends \
@@ -17,6 +25,7 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
         curl \
         ca-certificates \
         jq \
+        fonts-noto-color-emoji \
     && apt-get autoremove -y \
     && apt-get clean -y \
     && rm -rf /var/lib/apt/lists/*
