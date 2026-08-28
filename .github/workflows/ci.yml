@@ -179,6 +179,11 @@ jobs:
               body: {storage: {value: $body, representation: "storage"}},
               version: {number: 1}}' >/tmp/confluence-mock/page-attachments.json
 
+          # The mock for GET /wiki/rest/api/user?accountId=..., resolving the
+          # ri:account-id mentioned in sample-attachments.confluence above.
+          jq -n '{accountId: "557058:11112222-3333-4444-5555-666677778888",
+                  publicName: "Jane Reviewer"}' >/tmp/confluence-mock/user.json
+
           # 1x1 PNG and a plain text file, standing in for real attachments.
           base64 -d >/tmp/confluence-mock/diagram.png <<<"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
           cp /tmp/confluence-mock/diagram.png /tmp/confluence-mock/logo.png
@@ -249,6 +254,17 @@ jobs:
                   alias /usr/share/nginx/html/attachments.json;
               }
 
+              # Only one account is ever mentioned across the fixtures this
+              # mock serves, so the response doesn't need to branch on the
+              # accountId query parameter the way a real multi-user site
+              # would.
+              location = /wiki/rest/api/user {
+                  auth_basic "Confluence Mock";
+                  auth_basic_user_file /etc/nginx/htpasswd;
+                  default_type application/json;
+                  alias /usr/share/nginx/html/user.json;
+              }
+
               location ~ ^/download/attachments/12346/(diagram\.png|logo\.png|spec\.txt|evil\.png)$ {
                   auth_basic "Confluence Mock";
                   auth_basic_user_file /etc/nginx/htpasswd;
@@ -295,6 +311,7 @@ jobs:
             -v /tmp/confluence-mock/page.json:/usr/share/nginx/html/page.json:ro \
             -v /tmp/confluence-mock/page-attachments.json:/usr/share/nginx/html/page-attachments.json:ro \
             -v /tmp/confluence-mock/attachments.json:/usr/share/nginx/html/attachments.json:ro \
+            -v /tmp/confluence-mock/user.json:/usr/share/nginx/html/user.json:ro \
             -v /tmp/confluence-mock/diagram.png:/usr/share/nginx/html/diagram.png:ro \
             -v /tmp/confluence-mock/logo.png:/usr/share/nginx/html/logo.png:ro \
             -v /tmp/confluence-mock/spec.txt:/usr/share/nginx/html/spec.txt:ro \
@@ -392,6 +409,12 @@ jobs:
           # An <ac:image> quoted inside a code sample is not an image and must
           # survive as written, not be rewritten or have its attachment resolved.
           grep -q '<ri:attachment ri:filename="not-really-an-image.png" />' page.md
+          # The mention resolved to a real name via /rest/api/user, the date
+          # lozenge became its plain ISO date, and the emoji rendered as the
+          # character its ac:emoji-fallback names.
+          grep -q 'Reviewed by @Jane Reviewer' page.md
+          grep -q '^2026-08-27$' page.md
+          grep -q '✅ done' page.md
 
       - name: Confluence URL import - attachment download sanitizes a hostile filename
         run: |

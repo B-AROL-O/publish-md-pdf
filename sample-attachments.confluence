@@ -15,3 +15,9 @@
 <h2>An image macro quoted inside a code block</h2>
 <p>This one is a code sample, not an image, and must survive as written:</p>
 <ac:structured-macro ac:name="code" ac:schema-version="1"><ac:parameter ac:name="language">xml</ac:parameter><ac:plain-text-body><![CDATA[<ac:image><ri:attachment ri:filename="not-really-an-image.png" /></ac:image>]]></ac:plain-text-body></ac:structured-macro>
+<h2>A user mention</h2>
+<p>Reviewed by <ac:link><ri:user ri:account-id="557058:11112222-3333-4444-5555-666677778888" /></ac:link>.</p>
+<h2>A date</h2>
+<p><time datetime="2026-08-27" /></p>
+<h2>An emoji reaction</h2>
+<p><ac:emoticon ac:name="tick" ac:emoji-shortname=":white_check_mark:" ac:emoji-id="2705" ac:emoji-fallback="&#9989;" /> done</p>

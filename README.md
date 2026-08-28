@@ -354,6 +354,24 @@ and `ac:link`/`ri:attachment` file links resolve rather than pointing at nothing
 - Pass `--no-attachments` (or, via the Action, `attachments: false`) to skip every download; image and
   file references are still rewritten, but then point at files that were never fetched.
 
+### User mentions, dates, and emoji
+
+A user mention (`@Name` in the Confluence editor) is stored as nothing but an opaque
+`ri:account-id`, so `--format md` and `--format pdf` resolve it to a display name with one extra API
+call per _distinct_ mentioned user (`GET /rest/api/user?accountId=...`), cached for the rest of that
+page. It renders as plain `@Display Name` text. If the lookup fails — the account was since
+deactivated, or the API is unreachable — the mention still renders, as `@unknown-user`, rather than
+silently vanishing; a warning is printed either way. `--format confluence` does not resolve mentions,
+for the same reason it doesn't download attachments: the saved file keeps the original
+`ri:account-id` reference so re-uploading it elsewhere keeps working.
+
+A date lozenge (`<time datetime="2026-08-27" />`) becomes its plain ISO 8601 date text, and an
+`ac:emoticon` (both the legacy emoticon set and a modern emoji reaction) becomes the actual character
+it stands for. Rendering that character in the PDF needs a font with emoji coverage; the Docker image
+installs `fonts-noto-color-emoji` for this. Running `publish-md-pdf.sh` directly on a host instead of
+via the image needs the same (or another emoji-capable) font installed there, or emoji fall back to
+blank space rather than a visible glyph.
+
 Known limitations, beyond those already listed for [Converting to/from
 Confluence](#converting-tofrom-confluence) — real Confluence pages use macros this tool's storage-to-Markdown
 conversion has never had to handle:
@@ -361,8 +379,8 @@ conversion has never had to handle:
 - `ac:link` / `ri:page` (internal links to other Confluence pages) — left as plain text, since there's
   no local file to point at.
 - `ac:task-list` — doesn't become GFM `- [ ]` / `- [x]` task-list syntax.
-- Info/note/warning panels, `ac:layout`, page properties, and structured macros other than `code`
-  generally.
+- Info/note/warning panels, `ac:layout`, page properties, `ac:structured-macro ac:name="status"`, and
+  structured macros other than `code` generally.
 
 ## Rendering Mermaid diagrams
 

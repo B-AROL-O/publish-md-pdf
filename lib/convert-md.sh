@@ -48,10 +48,12 @@ convert_md_restore_code_blocks() {
 				fi
 				continue
 			fi
-			# Images and attachment links are rewritten here, on the non-code
-			# lines only, so that a literal <ac:image> quoted inside a code
-			# macro survives as the code sample it is.
-			if [[ "$line" == *"<ac:image"* || "$line" == *"<ac:link"* ]]; then
+			# Images, attachment links, mentions, dates and emoticons are
+			# rewritten here, on the non-code lines only, so that a literal
+			# <ac:image> quoted inside a code macro survives as the code
+			# sample it is.
+			if [[ "$line" == *"<ac:image"* || "$line" == *"<ac:link"* ||
+				"$line" == *"<ac:emoticon"* || "$line" == *"<time"* ]]; then
 				line="$(convert_md_rewrite_objects "$line")"
 			fi
 			printf '%s\n' "$line"
@@ -76,6 +78,21 @@ convert_md_attr() {
 	local hay="$1" attr="$2"
 	if [[ "$hay" =~ $attr=\"([^\"]*)\" ]]; then
 		xml_unescape_attr "${BASH_REMATCH[1]}"
+	fi
+}
+
+# The same, but left exactly as the storage format wrote it. Storage format is
+# XHTML and the generated fragment below is HTML, and the two share one
+# escaping scheme, so an attribute value that is going straight into HTML *text*
+# rather than being compared against unescaped JSON is correct untouched -- and
+# only untouched. ac:emoji-fallback is the reason this exists: it holds a
+# numeric character reference ("&#9989;"), which xml_unescape_attr deliberately
+# does not decode, so passing it through raw lets pandoc's HTML reader resolve
+# it while unescaping first would emit a broken "&" into the middle of the text.
+convert_md_attr_verbatim() {
+	local hay="$1" attr="$2"
+	if [[ "$hay" =~ $attr=\"([^\"]*)\" ]]; then
+		printf '%s' "${BASH_REMATCH[1]}"
 	fi
 }
 
@@ -188,13 +205,43 @@ convert_md_emit_image() {
 	fi
 }
 
-# Renders one <ac:link> as an <a>, but only the attachment-backed kind.
+# Renders a user mention -- <ac:link><ri:user ri:account-id="..."/></ac:link> --
+# as the plain text "@Display Name".
+#
+# Plain text, not a <span class="...">: nothing here needs styling, and the
+# fewer raw HTML elements this puts in front of pandoc's gfm writer the fewer
+# ways the round trip can lose them. The "@" is kept because that is how the
+# mention reads on the Confluence page it came from.
+#
+# The name comes from CONFLUENCE_USER_MAP, which only a URL fetch fills in;
+# converting a local .confluence file (or a lookup that failed) has nothing to
+# resolve and falls back to a visible placeholder. That placeholder is the whole
+# point: before this, an unresolved mention was emitted as nothing at all, so a
+# seven-person participant list rendered as seven empty bullets with no hint
+# that anything had been dropped.
+convert_md_emit_mention() {
+	local account_id="$1" name
+	name="${CONFLUENCE_USER_MAP[$account_id]:-}"
+	[ -n "$name" ] || name="unknown-user"
+	printf '@%s' "$(html_escape_attr "$name")"
+}
+
+# Renders one <ac:link> as an <a> (the attachment-backed kind) or as an
+# "@Name" mention (the <ri:user> kind).
 # <ac:link> wrapping <ri:page> is a link to another Confluence page, which has
 # no local equivalent, so it's left alone exactly as before.
 convert_md_emit_link() {
-	local elem="$1" filename text
+	local elem="$1" filename text account_id
 	filename="$(convert_md_attr "$elem" 'ri:filename')"
-	[ -n "$filename" ] || return 1
+	if [ -z "$filename" ]; then
+		# Cloud identifies a mentioned user by account id; the ri:userkey of a
+		# Server/DC page is deliberately not handled, since this tool only ever
+		# talks to Confluence Cloud and there is no API to resolve one.
+		account_id="$(convert_md_attr "$elem" 'ri:account-id')"
+		[ -n "$account_id" ] || return 1
+		convert_md_emit_mention "$account_id"
+		return 0
+	fi
 
 	text="$(convert_md_element_body "$elem" 'ac:plain-text-link-body')"
 	if [ -n "$text" ]; then
@@ -211,10 +258,90 @@ convert_md_emit_link() {
 	printf '<a href="%s">%s</a>' "$(html_escape_attr "$(convert_md_attachment_path "$filename")")" "$text"
 }
 
-# Rewrites the storage-format elements that carry visible content -- images
-# and attachment links -- into the plain HTML pandoc's reader understands.
-# Without this pandoc silently discards them, which is why a page imported
-# from Confluence used to lose its images entirely.
+# Renders a Confluence date -- <time datetime="2026-08-27" /> -- as its ISO
+# date text.
+#
+# The element carries no text of its own (Confluence formats the lozenge in the
+# browser, from the reader's locale), which is exactly why pandoc used to drop
+# the whole thing and leave a "Data" heading with nothing under it. ISO 8601 is
+# emitted rather than a localized "Aug 27, 2026" because there is no locale to
+# render for: the conversion runs in a container, and an unambiguous date beats
+# one silently formatted as the image's C locale.
+convert_md_emit_time() {
+	local elem="$1" value
+	convert_md_is_empty_element "$elem" || return 1
+	value="$(convert_md_attr "$elem" 'datetime')"
+	# Anything that isn't a plain calendar date is left alone rather than
+	# pasted into the document sight unseen.
+	[[ "$value" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || return 1
+	printf '%s' "$value"
+}
+
+# Renders an <ac:emoticon> as the character it stands for.
+#
+# Modern Confluence writes the character itself in ac:emoji-fallback, so that
+# attribute is authoritative when present and is passed through verbatim (see
+# convert_md_attr_verbatim). The ac:name table below is the legacy emoticon set,
+# which predates emoji in Confluence and has no fallback attribute at all. An
+# emoticon matching neither is left untouched -- i.e. dropped by pandoc, as
+# before -- rather than guessed at.
+#
+# Note this needs a font with emoji coverage to survive to the rendered PDF:
+# the Docker image installs fonts-noto-color-emoji for exactly this reason, and
+# without it WeasyPrint lays every one of these out as blank space.
+convert_md_emit_emoticon() {
+	local elem="$1" fallback name
+	convert_md_is_empty_element "$elem" || return 1
+
+	fallback="$(convert_md_attr_verbatim "$elem" 'ac:emoji-fallback')"
+	if [ -n "$fallback" ]; then
+		printf '%s' "$fallback"
+		return 0
+	fi
+
+	name="$(convert_md_attr "$elem" 'ac:name')"
+	case "$name" in
+	smile) printf '🙂' ;;
+	sad) printf '🙁' ;;
+	cheeky) printf '😜' ;;
+	laugh) printf '😃' ;;
+	wink) printf '😉' ;;
+	thumbs-up) printf '👍' ;;
+	thumbs-down) printf '👎' ;;
+	information) printf 'ℹ' ;;
+	tick) printf '✅' ;;
+	cross) printf '❌' ;;
+	warning) printf '⚠' ;;
+	plus) printf '➕' ;;
+	minus) printf '➖' ;;
+	question) printf '❓' ;;
+	light-on) printf '💡' ;;
+	light-off) printf '🔅' ;;
+	yellow-star | red-star | green-star | blue-star) printf '⭐' ;;
+	flag) printf '🚩' ;;
+	flag-off) printf '🏳' ;;
+	*) return 1 ;;
+	esac
+}
+
+# True when an element's attribute text is that of a self-closing tag, i.e. it
+# ends in the "/" of "<time ... />".
+#
+# The two elements above are only rewritten in that spelling, the only one
+# Confluence writes. The alternative -- "<time ...>some text</time>" -- would
+# need its inner text kept rather than replaced by the attribute value, and
+# passing it through unchanged is both simpler and exactly the behavior it had
+# before this existed.
+convert_md_is_empty_element() {
+	[[ "$1" =~ /[[:space:]]*$ ]]
+}
+
+# Rewrites the storage-format elements that carry visible content -- images,
+# attachment links, user mentions, dates and emoticons -- into the plain HTML
+# pandoc's reader understands. Without this pandoc silently discards them,
+# which is why a page imported from Confluence used to lose its images
+# entirely, and why a real meeting-notes page came back with an empty date
+# section, unlabelled emoji-less headings, and one empty bullet per attendee.
 #
 # This is a scanner rather than a sed pattern for two reasons. A storage body
 # straight from the REST API puts the whole page on one line, so several
@@ -234,7 +361,10 @@ convert_md_rewrite_objects() {
 		best_marker=""
 		# Both spellings of each start tag, so that <ac:link-body> -- which
 		# shares the "<ac:link" stem -- can never be mistaken for a link.
-		for cand in "<ac:image>" "<ac:image " "<ac:link>" "<ac:link "; do
+		# <ac:emoticon> and <time> are attribute-only elements, so only the
+		# "<NAME " spelling can carry anything worth rewriting.
+		for cand in "<ac:image>" "<ac:image " "<ac:link>" "<ac:link " \
+			"<ac:emoticon " "<time "; do
 			[[ "$text" == *"$cand"* ]] || continue
 			prefix="${text%%"$cand"*}"
 			if [ -z "$best_kind" ] || [ "${#prefix}" -lt "${#best_prefix}" ]; then
@@ -242,17 +372,22 @@ convert_md_rewrite_objects() {
 				best_marker="$cand"
 				case "$cand" in
 				"<ac:image"*) best_kind="image" ;;
-				*) best_kind="link" ;;
+				"<ac:link"*) best_kind="link" ;;
+				"<ac:emoticon"*) best_kind="emoticon" ;;
+				*) best_kind="time" ;;
 				esac
 			fi
 		done
 		[ -n "$best_kind" ] || break
 
-		if [ "$best_kind" = "image" ]; then
-			end_marker="</ac:image>"
-		else
-			end_marker="</ac:link>"
-		fi
+		case "$best_kind" in
+		image) end_marker="</ac:image>" ;;
+		link) end_marker="</ac:link>" ;;
+		# An attribute-only element ends at its own ">"; there is no separate
+		# end tag to look for. convert_md_is_empty_element then rejects the
+		# "<time ...>text</time>" spelling, whose ">" this also matches.
+		*) end_marker=">" ;;
+		esac
 
 		tail="${text#"$best_prefix$best_marker"}"
 		# An unterminated element (or a self-closing <ac:image/>, which carries
@@ -261,11 +396,12 @@ convert_md_rewrite_objects() {
 		elem="${tail%%"$end_marker"*}"
 		rest="${tail#*"$end_marker"}"
 
-		if [ "$best_kind" = "image" ]; then
-			replacement="$(convert_md_emit_image "$elem")" || replacement=""
-		else
-			replacement="$(convert_md_emit_link "$elem")" || replacement=""
-		fi
+		case "$best_kind" in
+		image) replacement="$(convert_md_emit_image "$elem")" || replacement="" ;;
+		link) replacement="$(convert_md_emit_link "$elem")" || replacement="" ;;
+		emoticon) replacement="$(convert_md_emit_emoticon "$elem")" || replacement="" ;;
+		time) replacement="$(convert_md_emit_time "$elem")" || replacement="" ;;
+		esac
 
 		if [ -n "$replacement" ]; then
 			out+="$best_prefix$replacement"

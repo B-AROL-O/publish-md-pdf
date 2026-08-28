@@ -247,6 +247,91 @@ confluence_fetch_page() {
 	CONFLUENCE_FETCH_BASE="$base"
 }
 
+# Resolves every distinct user mention in the storage body at $2 to a display
+# name, filling CONFLUENCE_USER_MAP for lib/convert-md.sh.
+#
+# A mention is stored as nothing but an opaque account id
+# (<ri:user ri:account-id="..."/>), so the name is not in the page body at all
+# and has to be fetched separately -- there is no body-format or expand
+# parameter on the pages API that adds it. /rest/api/user?accountId=<id> is the
+# v1 endpoint for this; the v2 API has no user resource.
+#
+# One request per *distinct* id, so a page mentioning the same person in ten
+# table rows costs one lookup, and max_users bounds a pathological page.
+#
+# Every failure here is a WARNING that leaves the id unresolved, never an
+# error: convert_md_emit_mention then renders its "@unknown-user" placeholder,
+# which is still visible in the output. Losing the whole page because one
+# attendee's account was since deactivated would be the worse trade.
+confluence_fetch_users() {
+	local base="$1" storage_file="$2"
+	local api_url response_file http_status account_id name
+	local count=0 max_users=200
+
+	CONFLUENCE_USER_MAP=()
+
+	# The mention-free page -- most pages -- makes no request at all.
+	grep -q 'ri:account-id="' "$storage_file" || return 0
+
+	api_url="${base}/rest/api/user"
+	confluence_require_secure_url "$api_url" || return 0
+
+	response_file="$(mktemp)"
+	register_cleanup "$response_file"
+
+	# Process substitution, not a pipe: the loop has to run in this shell so
+	# that CONFLUENCE_USER_MAP survives it.
+	while IFS= read -r account_id; do
+		[ -n "$account_id" ] || continue
+		# grep pulled this straight out of an XHTML attribute, so it has to
+		# come back to raw text before it is used as a query parameter or as a
+		# map key -- lib/convert-md.sh looks the id up through convert_md_attr,
+		# which unescapes too, and the two sides must agree on the spelling.
+		account_id="$(xml_unescape_attr "$account_id")"
+		if [ "$count" -ge "$max_users" ]; then
+			echo "WARNING: more than $max_users distinct user mentions on this page;" >&2
+			echo "         the rest will render as placeholders" >&2
+			break
+		fi
+		count=$((count + 1))
+
+		# -G --data-urlencode rather than building the query by hand: an
+		# account id contains a ":" and may contain other characters that need
+		# escaping. It goes in argv, which is fine -- unlike the token in the
+		# -K config, an account id is not a secret.
+		http_status="$(curl -sS -G -K "$confluence_fetch_curl_cfg" \
+			--data-urlencode "accountId=$account_id" \
+			-o "$response_file" -w '%{http_code}' "$api_url")" || {
+			echo "WARNING: could not reach the users API; mentions will render as placeholders" >&2
+			return 0
+		}
+
+		if [ "$http_status" != "200" ]; then
+			echo "WARNING: HTTP $http_status resolving the mention of account $account_id;" >&2
+			echo "         it will render as a placeholder" >&2
+			continue
+		fi
+
+		# publicName is what the Confluence UI shows in a mention lozenge;
+		# displayName is the fallback for a site that exposes it instead. The
+		# name is server-controlled text on its way into a generated document,
+		# so control characters (a newline especially, which would break the
+		# single line this element sits on) are stripped here rather than
+		# trusted -- the same reasoning as confluence_safe_basename's.
+		name="$(jq -r '.publicName // .displayName // empty' "$response_file" 2>/dev/null |
+			tr -d '[:cntrl:]')"
+		if [ -z "$name" ]; then
+			echo "WARNING: no display name for account $account_id;" >&2
+			echo "         its mention will render as a placeholder" >&2
+			continue
+		fi
+
+		# shellcheck disable=SC2034 # read by lib/convert-md.sh
+		CONFLUENCE_USER_MAP["$account_id"]="$name"
+	done < <(grep -o 'ri:account-id="[^"]*"' "$storage_file" |
+		sed -e 's/^ri:account-id="//' -e 's/"$//' | sort -u)
+}
+
 # Resolves an attachment's downloadLink against the page's own base (the
 # "https://host/wiki" prefix), and refuses anything pointing at another host.
 #
