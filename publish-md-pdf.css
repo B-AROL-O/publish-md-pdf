@@ -71,17 +71,25 @@ table {
 
 th {
   text-align: left;
-  border-bottom: 1px solid rgb(0 0 0 / 18%);
 }
 
 th,
 td {
   padding: 5px 10px;
   overflow-wrap: break-word;
+
+  /* WeasyPrint 57.2 doesn't support the CSS Color 4 space/slash rgb()
+     syntax used elsewhere in this file (e.g. h1's border-bottom) -- it
+     silently drops the whole declaration, so this needs the legacy
+     comma-separated rgba() form to actually render. stylelint wants the
+     modern notation, but rendering correctly takes priority here. */
+  /* stylelint-disable-next-line color-function-notation, color-function-alias-notation, alpha-value-notation */
+  border: 1px solid rgba(0, 0, 0, 0.18);
 }
 
-table > tbody > tr + tr > td {
-  border-top: 1px solid rgb(0 0 0 / 18%);
+table > tbody > tr:nth-child(even) {
+  /* stylelint-disable-next-line color-function-notation, color-function-alias-notation, alpha-value-notation */
+  background-color: rgba(0, 0, 0, 0.03);
 }
 
 ul.task-list {
