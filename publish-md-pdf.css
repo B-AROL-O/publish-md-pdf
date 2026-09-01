@@ -33,13 +33,17 @@ h6 {
 h1 {
   font-size: 18pt;
   padding-bottom: 0.3em;
-  border-bottom: 1px solid rgb(0 0 0 / 18%);
+
+  /* stylelint-disable-next-line color-function-notation, color-function-alias-notation, alpha-value-notation */
+  border-bottom: 1px solid rgba(0, 0, 0, 0.18);
 }
 
 h2 {
   font-size: 15pt;
   padding-bottom: 0.3em;
-  border-bottom: 1px solid rgb(0 0 0 / 18%);
+
+  /* stylelint-disable-next-line color-function-notation, color-function-alias-notation, alpha-value-notation */
+  border-bottom: 1px solid rgba(0, 0, 0, 0.18);
 }
 
 h3 {
@@ -79,8 +83,8 @@ td {
   overflow-wrap: break-word;
 
   /* WeasyPrint 57.2 doesn't support the CSS Color 4 space/slash rgb()
-     syntax used elsewhere in this file (e.g. h1's border-bottom) -- it
-     silently drops the whole declaration, so this needs the legacy
+     syntax -- it silently drops the whole declaration, so every
+     translucent border/background in this file needs the legacy
      comma-separated rgba() form to actually render. stylelint wants the
      modern notation, but rendering correctly takes priority here. */
   /* stylelint-disable-next-line color-function-notation, color-function-alias-notation, alpha-value-notation */
@@ -157,8 +161,10 @@ img {
 blockquote {
   margin: 0.5em 0;
   padding: 0 16px 0 10px;
-  border-left: 5px solid rgb(0 0 0 / 18%);
   border-radius: 2px;
+
+  /* stylelint-disable-next-line color-function-notation, color-function-alias-notation, alpha-value-notation */
+  border-left: 5px solid rgba(0, 0, 0, 0.18);
 }
 
 a {
