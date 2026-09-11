@@ -13,7 +13,8 @@ jobs:
     name: Build & publish image to GHCR
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # write, not read: the last step moves the major git tag (see below).
+      contents: write
       packages: write
 
     steps:
@@ -47,7 +48,16 @@ jobs:
             echo "full=ghcr.io/b-arol-o/publish-md-pdf:${GITHUB_REF_NAME}"
             echo "major=ghcr.io/b-arol-o/publish-md-pdf:v${major}"
             echo "latest=ghcr.io/b-arol-o/publish-md-pdf:latest"
+            echo "major_tag=v${major}"
           } >>"$GITHUB_OUTPUT"
+
+          # A prerelease (v2.5.0-rc1) still matches this workflow's "v*.*.*"
+          # trigger -- that's a glob, not a regular expression, so the trailing
+          # "*" swallows "-rc1" -- but it must not move the major tag users pin.
+          case "$version" in
+          *-*) echo "move_major=false" >>"$GITHUB_OUTPUT" ;;
+          *) echo "move_major=true" >>"$GITHUB_OUTPUT" ;;
+          esac
 
       - name: Build & push image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -58,5 +68,33 @@ jobs:
             ${{ steps.tags.outputs.full }}
             ${{ steps.tags.outputs.major }}
             ${{ steps.tags.outputs.latest }}
+
+      # The image's :v<major> tag moves on every release, but "uses:
+      # B-AROL-O/publish-md-pdf@v<major>" resolves action.yml from the *git* ref,
+      # not from the image. Leaving the git tag behind is how @v2 spent four
+      # releases serving an action.yml with no "attachments" input, silently
+      # ignoring it for anyone who followed the README (#25). Moving it here, and
+      # only after the push above succeeded, keeps the two in lockstep.
+      #
+      # The REST API rather than "git push --force": checkout runs with
+      # persist-credentials false, so the worktree has no pushable credentials,
+      # and this needs none.
+      - name: Move the major git tag to this release
+        if: steps.tags.outputs.move_major == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAJOR_TAG: ${{ steps.tags.outputs.major_tag }}
+        run: |
+          if gh api --silent "repos/$GITHUB_REPOSITORY/git/refs/tags/$MAJOR_TAG" 2>/dev/null; then
+            gh api --silent -X PATCH \
+              "repos/$GITHUB_REPOSITORY/git/refs/tags/$MAJOR_TAG" \
+              -f sha="$GITHUB_SHA" -F force=true
+          else
+            # First release of a new major line: the tag doesn't exist yet.
+            gh api --silent -X POST \
+              "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/tags/$MAJOR_TAG" -f sha="$GITHUB_SHA"
+          fi
+          echo "INFO: git tag $MAJOR_TAG now points at $GITHUB_SHA"
 
 # EOF
