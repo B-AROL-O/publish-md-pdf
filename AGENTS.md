@@ -7,7 +7,7 @@ working with code in this repository. `CLAUDE.md` is a symlink to this file.
 
 `publish-md-pdf` converts between Markdown, PDF, and Confluence Storage Format, shipped as a
 Docker image (`ghcr.io/b-arol-o/publish-md-pdf`) and a Docker-based GitHub Action. Bash only — no
-package.json, no unit test framework.
+package.json, and no test framework beyond the hand-rolled assertions in `tests/`.
 
 ## Commands
 
@@ -32,20 +32,37 @@ Or against the scripts directly on a host with `pandoc`/`weasyprint` installed:
 ./publish-md-pdf.sh --format pdf sample.md
 ```
 
-There is no unit test suite; correctness is verified by the integration steps in
-`.github/workflows/ci.yml`, each an independent `docker run` plus an assertion. To run one of those
-checks locally, build the image first, then copy the relevant step's commands — e.g. the Mermaid
-rendering check:
+Correctness is checked at two levels. Unit tests cover the pure string functions in `lib/` — the
+storage-format scanners, the URL and filename guards, the escaping helpers — and need no Docker,
+pandoc or network, so they run in well under a second and are the fastest way to check a change to
+any of them:
+
+```bash
+./tests/run-tests.sh            # every suite
+./tests/run-tests.sh common     # just tests/test_common.sh
+```
+
+Anything that shells out to pandoc/WeasyPrint or talks to the REST API is covered instead by the
+integration steps in `.github/workflows/ci.yml`, each an independent `docker run` plus an assertion.
+To run one of those locally, build the image first, then copy the relevant step's commands — e.g.
+the Mermaid rendering check:
 
 ```bash
 docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 sample-mermaid.md
 pdftotext sample-mermaid.pdf - | grep -q erDiagram && echo "FAIL: rendered as literal code, not an image"
 ```
 
+When adding a test, put it in whichever `tests/test_<module>.sh` matches the module under test, and
+prefer a case that would have caught a bug this project actually shipped — several of the existing
+ones are exactly that (see the comments naming them). A function that needs pandoc or the network
+belongs in `ci.yml`, not here.
+
 Linting is `super-linter/slim` over the whole codebase (`.github/workflows/lint.yml`,
 `VALIDATE_ALL_CODEBASE: true`), plus `.markdownlint.json` (120-char line length, tables/code blocks
 exempt) and `biome.json` (2-space indent) for any JSON/JS. There's no local lint script; the
-fastest local check for a shell change is `shellcheck lib/*.sh publish-md-pdf.sh entrypoint.sh`.
+fastest local check for a shell change is
+`shellcheck -x lib/*.sh publish-md-pdf.sh entrypoint.sh tests/*.sh` — note `-x`, which is what
+super-linter uses, and without which every `source` line reports a spurious SC1091.
 
 ## Architecture
 

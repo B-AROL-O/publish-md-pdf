@@ -59,6 +59,13 @@ jobs:
             exit 1
           }
 
+      # First, and before the image build: these cover the pure string
+      # functions in lib/ with no Docker, pandoc or network, so the whole
+      # suite finishes in well under a second and a cheap failure doesn't
+      # wait on a two-minute build to surface.
+      - name: Unit tests
+        run: ./tests/run-tests.sh
+
       # Tagged to match runs.image in action.yml, so the "Action self-test"
       # steps below resolve to this locally built image instead of pulling
       # the published one.
