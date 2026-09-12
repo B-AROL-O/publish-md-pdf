@@ -14,5 +14,10 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # A new action release could be a compromised one nobody's noticed yet;
+    # waiting a week before Dependabot proposes it gives the community time to
+    # catch that first. Caught by zizmor's dependabot-cooldown audit.
+    cooldown:
+      default-days: 7
 
 # EOF
