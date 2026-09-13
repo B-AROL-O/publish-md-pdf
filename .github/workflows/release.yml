@@ -44,30 +44,39 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           major="${version%%.*}"
-          {
-            echo "full=ghcr.io/b-arol-o/publish-md-pdf:${GITHUB_REF_NAME}"
-            echo "major=ghcr.io/b-arol-o/publish-md-pdf:v${major}"
-            echo "latest=ghcr.io/b-arol-o/publish-md-pdf:latest"
-            echo "major_tag=v${major}"
-          } >>"$GITHUB_OUTPUT"
+          full="ghcr.io/b-arol-o/publish-md-pdf:${GITHUB_REF_NAME}"
+
+          echo "major_tag=v${major}" >>"$GITHUB_OUTPUT"
 
           # A prerelease (v2.5.0-rc1) still matches this workflow's "v*.*.*"
           # trigger -- that's a glob, not a regular expression, so the trailing
-          # "*" swallows "-rc1" -- but it must not move the major tag users pin.
+          # "*" swallows "-rc1" -- but it must not move the major git tag (below)
+          # or the moving :v<major>/:latest image tags (in "tags" just below):
+          # either would repoint something users pin to at a release candidate
+          # (#33), the same "not coherent" drift #25's fix was written to avoid
+          # for the git tag specifically.
           case "$version" in
-          *-*) echo "move_major=false" >>"$GITHUB_OUTPUT" ;;
-          *) echo "move_major=true" >>"$GITHUB_OUTPUT" ;;
+          *-*) move_major=false ;;
+          *) move_major=true ;;
           esac
+          echo "move_major=$move_major" >>"$GITHUB_OUTPUT"
+
+          {
+            echo "tags<<TAGS_EOF"
+            echo "$full"
+            if [ "$move_major" = "true" ]; then
+              echo "ghcr.io/b-arol-o/publish-md-pdf:v${major}"
+              echo "ghcr.io/b-arol-o/publish-md-pdf:latest"
+            fi
+            echo "TAGS_EOF"
+          } >>"$GITHUB_OUTPUT"
 
       - name: Build & push image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           push: true
-          tags: |
-            ${{ steps.tags.outputs.full }}
-            ${{ steps.tags.outputs.major }}
-            ${{ steps.tags.outputs.latest }}
+          tags: ${{ steps.tags.outputs.tags }}
 
       # The image's :v<major> tag moves on every release, but "uses:
       # B-AROL-O/publish-md-pdf@v<major>" resolves action.yml from the *git* ref,
