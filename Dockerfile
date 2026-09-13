@@ -56,7 +56,8 @@ RUN { \
         echo "chromium: $(dpkg-query -W -f='${Version}' chromium)"; \
         echo "nodejs: $(dpkg-query -W -f='${Version}' nodejs)"; \
         echo "mermaid-cli: $(mmdc --version)"; \
-    } | tee /usr/local/share/toolchain-versions.txt
+    } >/usr/local/share/toolchain-versions.txt \
+    && cat /usr/local/share/toolchain-versions.txt
 
 COPY publish-md-pdf.sh publish-md-pdf.css entrypoint.sh \
     mermaid-filter.lua mermaid-puppeteer-config.json /usr/local/bin/
