@@ -112,7 +112,7 @@ xml_unescape_attr() {
 require_command() {
 	local cmd="$1" hint="$2"
 	if ! command -v "$cmd" >/dev/null 2>&1; then
-		echo "ERROR: '$cmd' is not installed. Install it with: $hint"
+		echo "ERROR: '$cmd' is not installed. Install it with: $hint" >&2
 		exit 1
 	fi
 }
@@ -120,11 +120,11 @@ require_command() {
 require_file_with_ext() {
 	local file="$1" ext="$2" label="$3"
 	if [ ! -f "$file" ]; then
-		echo "ERROR: File not found: $file"
+		echo "ERROR: File not found: $file" >&2
 		exit 1
 	fi
 	if [ "${file##*.}" != "$ext" ]; then
-		echo "ERROR: Not a $label file: $file"
+		echo "ERROR: Not a $label file: $file" >&2
 		exit 1
 	fi
 }

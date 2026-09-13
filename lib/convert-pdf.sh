@@ -17,7 +17,7 @@ convert_pdf_init() {
 
 	# shellcheck disable=SC2154 # $css_file is set by the sourcing publish-md-pdf.sh
 	if [ ! -f "$css_file" ]; then
-		echo "ERROR: CSS file not found: $css_file"
+		echo "ERROR: CSS file not found: $css_file" >&2
 		exit 1
 	fi
 
@@ -63,8 +63,8 @@ convert_pdf_file() {
 		--resource-path="$(dirname "$md_file")" \
 		"${pdf_pandoc_extra_args[@]}" \
 		-o "$tmp_html" 2>&1); then
-		echo "$pandoc_output"
-		echo "ERROR: pandoc failed to convert $md_file"
+		echo "$pandoc_output" >&2
+		echo "ERROR: pandoc failed to convert $md_file" >&2
 		rm -f "$tmp_html"
 		exit 1
 	fi
@@ -83,8 +83,8 @@ convert_pdf_file() {
 
 	if ! weasyprint_output=$(weasyprint "$tmp_html" "$pdf_file" \
 		--base-url "$(dirname "$md_file")" 2>&1); then
-		echo "$weasyprint_output"
-		echo "ERROR: weasyprint failed to render $md_file"
+		echo "$weasyprint_output" >&2
+		echo "ERROR: weasyprint failed to render $md_file" >&2
 		rm -f "$tmp_html"
 		exit 1
 	fi

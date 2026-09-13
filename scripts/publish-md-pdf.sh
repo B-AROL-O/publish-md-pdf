@@ -57,7 +57,7 @@ no_attachments=0
 
 require_argument() {
 	[ "$2" -ge 2 ] || {
-		echo "ERROR: $1 requires an argument"
+		echo "ERROR: $1 requires an argument" >&2
 		exit 1
 	}
 }
@@ -97,8 +97,8 @@ while [ $# -gt 0 ]; do
 		break
 		;;
 	-*)
-		echo "ERROR: Unknown option: $1"
-		usage
+		echo "ERROR: Unknown option: $1" >&2
+		usage >&2
 		exit 1
 		;;
 	*)
@@ -108,12 +108,12 @@ while [ $# -gt 0 ]; do
 done
 
 if [ $# -eq 0 ]; then
-	usage
+	usage >&2
 	exit 1
 fi
 
 if [ -n "$output_name" ] && [ $# -gt 1 ]; then
-	echo "ERROR: --output-name can only be used with a single input file"
+	echo "ERROR: --output-name can only be used with a single input file" >&2
 	exit 1
 fi
 
@@ -144,19 +144,19 @@ md)
 	src_label="Confluence Storage Format (.confluence)"
 	;;
 *)
-	echo "ERROR: Unknown --format: '$effective_format' (expected pdf, confluence, or md)"
-	usage
+	echo "ERROR: Unknown --format: '$effective_format' (expected pdf, confluence, or md)" >&2
+	usage >&2
 	exit 1
 	;;
 esac
 
 if [ -n "$css_file" ] && [ "$effective_format" != "pdf" ]; then
-	echo "ERROR: --css-file is only valid with --format pdf (got --format $effective_format)"
+	echo "ERROR: --css-file is only valid with --format pdf (got --format $effective_format)" >&2
 	exit 1
 fi
 
 if ! command -v docker >/dev/null 2>&1; then
-	echo "ERROR: 'docker' is not installed or not on PATH."
+	echo "ERROR: 'docker' is not installed or not on PATH." >&2
 	exit 1
 fi
 
@@ -164,7 +164,7 @@ fi
 # Desktop not started, the service stopped, ...); without this, that case falls
 # through to whatever raw error the eventual 'docker run' happens to print.
 if ! docker info >/dev/null 2>&1; then
-	echo "ERROR: Docker is installed, but the daemon isn't running (or not reachable). Start Docker Desktop (or the Docker service) and try again."
+	echo "ERROR: Docker is installed, but the daemon isn't running (or not reachable). Start Docker Desktop (or the Docker service) and try again." >&2
 	exit 1
 fi
 
@@ -242,7 +242,7 @@ fi
 [ -n "$output_name" ] && args+=(--output-name "$output_name")
 if [ -n "$css_file" ]; then
 	if [ ! -f "$css_file" ]; then
-		echo "ERROR: CSS file not found: $css_file"
+		echo "ERROR: CSS file not found: $css_file" >&2
 		exit 1
 	fi
 	container_path_for "$css_file"
@@ -260,11 +260,11 @@ for input in "$@"; do
 	esac
 
 	if [ ! -f "$input" ]; then
-		echo "ERROR: File not found: $input"
+		echo "ERROR: File not found: $input" >&2
 		exit 1
 	fi
 	if [ "${input##*.}" != "$src_ext" ]; then
-		echo "ERROR: Not a $src_label file: $input"
+		echo "ERROR: Not a $src_label file: $input" >&2
 		exit 1
 	fi
 	container_path_for "$input"

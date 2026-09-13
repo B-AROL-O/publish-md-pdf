@@ -647,8 +647,8 @@ convert_md_file() {
 		--to=gfm \
 		--wrap=none \
 		-o "$out_file" 2>&1); then
-		echo "$pandoc_output"
-		echo "ERROR: pandoc failed to convert $confluence_file"
+		echo "$pandoc_output" >&2
+		echo "ERROR: pandoc failed to convert $confluence_file" >&2
 		rm -f "$tmp_html"
 		exit 1
 	fi

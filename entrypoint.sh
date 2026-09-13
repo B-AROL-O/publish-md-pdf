@@ -32,7 +32,7 @@ attachments="$(printenv 'INPUT_ATTACHMENTS' || true)"
 [ "$attachments" = "false" ] && args+=(--no-attachments)
 
 if [ -z "$INPUT_FILES" ]; then
-	echo "ERROR: 'files' input is required"
+	echo "ERROR: 'files' input is required" >&2
 	exit 1
 fi
 
