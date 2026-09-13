@@ -44,8 +44,8 @@ ENV PUPPETEER_SKIP_DOWNLOAD=true
 RUN npm install --global --no-audit --no-fund @mermaid-js/mermaid-cli@11.16.0 \
     && npm cache clean --force
 
-# pandoc and weasyprint aren't pinned to a version above (bookworm-slim's apt repo only ever
-# serves the current one, so a hardcoded "pkg=version" pin would eventually 404 and break the
+# pandoc and weasyprint aren't pinned to a version above (bookworm-slim's apt repository only
+# ever serves the current one, so a hardcoded "pkg=version" pin would eventually 404 and break the
 # build outright). Recording what actually got installed is the fallback #27 asks for: it can't
 # prevent a rendering change from a toolchain bump, but it makes one traceable after the fact --
 # diff this file against a previous image's to see whether a render difference lines up with a

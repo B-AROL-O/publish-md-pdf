@@ -74,8 +74,8 @@ the CLI and the Action always share one code path.
 The `Dockerfile`'s base image is pinned by digest, not just the `bookworm-slim` tag, because the
 tag is a moving pointer and two rendering regressions (#14, #21/#23) already came from a toolchain
 version nobody had pinned or recorded. `pandoc`/`weasyprint`/etc. stay unpinned versions
-(bookworm-slim's apt repo only ever serves the current one, so a hardcoded `pkg=version` would
-eventually 404 the build), but a `RUN` step after installing them writes what actually got resolved
+(bookworm-slim's apt repository only ever serves the current one, so a hardcoded `pkg=version`
+would eventually 404 the build), but a `RUN` step after installing them writes what actually got resolved
 to `/usr/local/share/toolchain-versions.txt` inside the image; `ci.yml`'s "Toolchain versions" step
 prints it on every run so a rendering regression can be checked against a version change there
 first. See #27.
