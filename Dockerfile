@@ -4,7 +4,14 @@
 # Actions requires such containers to run as root to write into the mounted GITHUB_WORKSPACE
 # (see https://docs.github.com/en/actions/reference/workflows-and-actions/dockerfile-support).
 # The equivalent Trivy finding (AVD-DS-0002) is suppressed via .trivyignore for the same reason.
-FROM debian:bookworm-slim
+#
+# Pinned by digest, not just tag: "bookworm-slim" is a moving pointer, so an unpinned FROM can
+# resolve to a different image on every rebuild of the same commit. Two rendering regressions
+# already came from exactly that kind of untracked toolchain drift (WeasyPrint dropping CSS
+# Color 4 alpha in #21/#23; pandoc changing <figure>/<figcaption> handling in #14) -- see #27.
+# Resolved from the "bookworm-slim" manifest list via the registry API; update by re-resolving
+# that tag, not by hand.
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
 
 # fonts-noto-color-emoji is a rendering dependency, not a nicety: the only fonts
 # otherwise present are the DejaVu family that weasyprint/chromium pull in, and
@@ -36,6 +43,20 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update \
 ENV PUPPETEER_SKIP_DOWNLOAD=true
 RUN npm install --global --no-audit --no-fund @mermaid-js/mermaid-cli@11.16.0 \
     && npm cache clean --force
+
+# pandoc and weasyprint aren't pinned to a version above (bookworm-slim's apt repo only ever
+# serves the current one, so a hardcoded "pkg=version" pin would eventually 404 and break the
+# build outright). Recording what actually got installed is the fallback #27 asks for: it can't
+# prevent a rendering change from a toolchain bump, but it makes one traceable after the fact --
+# diff this file against a previous image's to see whether a render difference lines up with a
+# version change.
+RUN { \
+        echo "pandoc: $(dpkg-query -W -f='${Version}' pandoc)"; \
+        echo "weasyprint: $(dpkg-query -W -f='${Version}' weasyprint)"; \
+        echo "chromium: $(dpkg-query -W -f='${Version}' chromium)"; \
+        echo "nodejs: $(dpkg-query -W -f='${Version}' nodejs)"; \
+        echo "mermaid-cli: $(mmdc --version)"; \
+    } | tee /usr/local/share/toolchain-versions.txt
 
 COPY publish-md-pdf.sh publish-md-pdf.css entrypoint.sh \
     mermaid-filter.lua mermaid-puppeteer-config.json /usr/local/bin/
