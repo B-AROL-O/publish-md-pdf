@@ -82,8 +82,8 @@ convert_confluence_file() {
 		--no-highlight \
 		--resource-path="$(dirname "$md_file")" \
 		-o "$tmp_html" 2>&1); then
-		echo "$pandoc_output"
-		echo "ERROR: pandoc failed to convert $md_file"
+		echo "$pandoc_output" >&2
+		echo "ERROR: pandoc failed to convert $md_file" >&2
 		rm -f "$tmp_html"
 		exit 1
 	fi

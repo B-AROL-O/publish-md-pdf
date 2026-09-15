@@ -65,7 +65,7 @@ fetch_attachments=1
 
 require_argument() {
 	[ "$2" -ge 2 ] || {
-		echo "ERROR: $1 requires an argument"
+		echo "ERROR: $1 requires an argument" >&2
 		exit 1
 	}
 }
@@ -107,8 +107,8 @@ while [ $# -gt 0 ]; do
 		break
 		;;
 	-*)
-		echo "ERROR: Unknown option: $1"
-		usage
+		echo "ERROR: Unknown option: $1" >&2
+		usage >&2
 		exit 1
 		;;
 	*)
@@ -154,22 +154,22 @@ md)
 	dst_ext="md"
 	;;
 *)
-	echo "ERROR: Unknown --format: '$format' (expected pdf, confluence, or md)"
-	usage
+	echo "ERROR: Unknown --format: '$format' (expected pdf, confluence, or md)" >&2
+	usage >&2
 	exit 1
 	;;
 esac
 
 if [ $# -eq 0 ]; then
-	usage
+	usage >&2
 	exit 1
 fi
 if [ -n "$output_name" ] && [ $# -gt 1 ]; then
-	echo "ERROR: --output-name can only be used with a single input file"
+	echo "ERROR: --output-name can only be used with a single input file" >&2
 	exit 1
 fi
 if [ "$css_file_given" -eq 1 ] && [ "$format" != "pdf" ]; then
-	echo "ERROR: --css-file is only valid with --format pdf (got --format $format)"
+	echo "ERROR: --css-file is only valid with --format pdf (got --format $format)" >&2
 	exit 1
 fi
 
