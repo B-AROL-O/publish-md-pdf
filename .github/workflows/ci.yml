@@ -72,6 +72,14 @@ jobs:
       - name: Build image
         run: docker build -t ghcr.io/b-arol-o/publish-md-pdf:v2 .
 
+      # Surfaces the pandoc/weasyprint/chromium/nodejs/mermaid-cli versions the Dockerfile
+      # resolved in *this* build, in every run's log -- so a rendering regression can be
+      # checked against a version change here before looking anywhere else (see #27).
+      - name: Toolchain versions
+        run: |
+          docker run --rm --entrypoint cat \
+            ghcr.io/b-arol-o/publish-md-pdf:v2 /usr/local/share/toolchain-versions.txt
+
       - name: Smoke test - render sample.md (default format)
         run: |
           docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 sample.md
