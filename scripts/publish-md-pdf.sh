@@ -1,7 +1,8 @@
 #!/bin/bash
 # ==========================================================
 # Convert Markdown files, Confluence Storage Format files, and Confluence
-# Cloud pages into each other - A4-sized PDF by default.
+# Cloud pages into each other - A4-sized PDF by default - and print GitHub
+# issues and pull requests.
 #
 # Thin wrapper around the ghcr.io/b-arol-o/publish-md-pdf container image, for
 # a host that has docker but not pandoc/weasyprint. Every flag maps onto the
@@ -24,10 +25,11 @@ IMAGE="${PUBLISH_MD_PDF_IMAGE:-ghcr.io/b-arol-o/publish-md-pdf:v2}"
 
 usage() {
 	echo "Usage: $0 [--format FORMAT] [--output-dir DIR] [--output-name NAME] [--css-file FILE] [--no-attachments] <file|url> [file2|url2 ...]"
-	echo "Converts each input file (or fetched Confluence page) to FORMAT (via $IMAGE)."
+	echo "Converts each input file (or fetched Confluence page, GitHub issue or pull"
+	echo "request) to FORMAT (via $IMAGE)."
 	echo
 	echo "  --format FORMAT     Conversion to perform (default: pdf; default: md if"
-	echo "                      every input is a URL):"
+	echo "                      every input is a Confluence URL):"
 	echo "                        pdf         Markdown (.md) to A4-sized PDF"
 	echo "                        confluence  Markdown (.md) to Confluence Storage Format"
 	echo "                        md          Confluence Storage Format to Markdown"
@@ -38,9 +40,18 @@ usage() {
 	echo "                      converting a single input"
 	echo "  --css-file FILE     Stylesheet to use (default: the image's built-in"
 	echo "                      publish-md-pdf.css); only valid with --format pdf"
-	echo "  --no-attachments    Don't download the attachments of a fetched Confluence page"
+	echo "  --no-attachments    Don't download the attachments of a fetched Confluence page,"
+	echo "                      nor the images of a fetched GitHub issue"
 	echo
-	echo "An input starting with http:// or https:// is fetched as a Confluence Cloud"
+	echo "An input of the form https://HOST/OWNER/REPO/issues/N or .../pull/N is fetched as"
+	echo "a GitHub issue or pull request (github.com or SUBDOMAIN.ghe.com). The token, if"
+	echo "any, is forwarded to the container:"
+	echo "  GITHUB_TOKEN          Token that can read the repository (or GH_TOKEN); optional"
+	echo "                        for a public github.com repository"
+	echo "  GITHUB_SERVER_URL     With GITHUB_API_URL, a GitHub Enterprise Server's web and"
+	echo "  GITHUB_API_URL        API base URLs (e.g. https://ghes.example.com/api/v3)"
+	echo
+	echo "Any other input starting with http:// or https:// is fetched as a Confluence Cloud"
 	echo "page instead of being read as a file - tiny links, /spaces/KEY/pages/<id>/Title,"
 	echo "?pageId=<id> and legacy /display/KEY/Title URLs. That needs credentials in the"
 	echo "environment, forwarded to the container:"
@@ -117,15 +128,26 @@ if [ -n "$output_name" ] && [ $# -gt 1 ]; then
 	exit 1
 fi
 
+# The same shape test as the image's own is_github_url (lib/fetch-github.sh).
+is_github_url() {
+	[[ "$1" =~ ^https?://[^/]+/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(issues|pull)/[0-9]+([/?#]|$) ]]
+}
+
 # Which format is in effect decides what the file inputs must look like. The
-# image applies the same default - pdf, unless every input is a URL, in which
-# case the page's own Markdown - so only an explicit --format is passed on.
+# image applies the same default - pdf, unless every input is a Confluence URL,
+# in which case the page's own Markdown - so only an explicit --format is
+# passed on.
 effective_format="$format"
 if [ -z "$effective_format" ]; then
 	effective_format="md"
 	for arg in "$@"; do
 		case "$arg" in
-		http://* | https://*) ;;
+		http://* | https://*)
+			if is_github_url "$arg"; then
+				effective_format="pdf"
+				break
+			fi
+			;;
 		*)
 			effective_format="pdf"
 			break
@@ -168,9 +190,10 @@ if ! docker info >/dev/null 2>&1; then
 	exit 1
 fi
 
-# The image reads Confluence credentials from the environment only, so they are
-# forwarded by name: passing them as -e VAR=value would expose the API token in
-# the process list. ATLASSIAN_* is accepted as an alias for either.
+# The image reads Confluence and GitHub credentials from the environment only,
+# so they are forwarded by name: passing them as -e VAR=value would expose the
+# token in the process list. ATLASSIAN_* is accepted as an alias for either
+# Confluence variable.
 if [ -z "${CONFLUENCE_EMAIL:-}" ] && [ -n "${ATLASSIAN_EMAIL:-}" ]; then
 	export CONFLUENCE_EMAIL="$ATLASSIAN_EMAIL"
 fi
@@ -181,7 +204,8 @@ fi
 env_args=()
 # PUBLISH_MD_PDF_ALLOW_INSECURE lets the image fetch over plain http, for a
 # local test server; it is forwarded so it can be set without editing this.
-for var in CONFLUENCE_EMAIL CONFLUENCE_API_TOKEN PUBLISH_MD_PDF_ALLOW_INSECURE; do
+for var in CONFLUENCE_EMAIL CONFLUENCE_API_TOKEN GITHUB_TOKEN GH_TOKEN GITHUB_SERVER_URL \
+	GITHUB_API_URL PUBLISH_MD_PDF_ALLOW_INSECURE; do
 	[ -n "${!var:-}" ] && env_args+=(-e "$var")
 done
 

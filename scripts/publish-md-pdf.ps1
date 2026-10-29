@@ -2,7 +2,8 @@
 <#
 .SYNOPSIS
     Convert Markdown, Confluence Storage Format and Confluence Cloud pages into
-    each other - A4-sized PDF by default - from PowerShell on Windows.
+    each other - A4-sized PDF by default - and print GitHub issues and pull
+    requests, from PowerShell on Windows.
 
 .DESCRIPTION
     Thin wrapper around the ghcr.io/b-arol-o/publish-md-pdf container image, so
@@ -17,7 +18,7 @@
 .PARAMETER Format
     Conversion to perform: pdf (Markdown to A4-sized PDF), confluence (Markdown
     to Confluence Storage Format), or md (Confluence Storage Format back to
-    Markdown). Defaults to pdf, or to md when every input is a URL.
+    Markdown). Defaults to pdf, or to md when every input is a Confluence URL.
 
 .PARAMETER OutputDir
     Directory to write the output file(s) into. Defaults to $PWD, and is created
@@ -31,15 +32,20 @@
     valid with -Format pdf.
 
 .PARAMETER NoAttachments
-    Skip downloading the attachments of a fetched Confluence Cloud page. Image
+    Skip downloading the attachments of a fetched Confluence Cloud page (image
     and file references are still rewritten, but point at files that were never
-    downloaded.
+    downloaded), and the images of a fetched GitHub issue (they stay remote URLs).
 
 .PARAMETER InputPath
-    One or more Markdown/Confluence files, or Confluence Cloud page URLs. A URL
-    is fetched via the REST API, which needs CONFLUENCE_EMAIL and
-    CONFLUENCE_API_TOKEN in the environment (ATLASSIAN_EMAIL and
-    ATLASSIAN_API_TOKEN are accepted as aliases).
+    One or more Markdown/Confluence files, Confluence Cloud page URLs, or GitHub
+    issue/pull request URLs (https://HOST/OWNER/REPO/issues/N or .../pull/N, on
+    github.com or SUBDOMAIN.ghe.com). A URL is fetched via the REST API.
+
+    A Confluence page needs CONFLUENCE_EMAIL and CONFLUENCE_API_TOKEN in the
+    environment (ATLASSIAN_EMAIL and ATLASSIAN_API_TOKEN are accepted as
+    aliases). A GitHub issue needs GITHUB_TOKEN (or GH_TOKEN), except in a
+    public github.com repository; for GitHub Enterprise Server, set
+    GITHUB_SERVER_URL and GITHUB_API_URL as well.
 
 .EXAMPLE
     .\scripts\publish-md-pdf.ps1 report.md
@@ -51,6 +57,10 @@
     $env:CONFLUENCE_EMAIL = 'me@example.com'
     $env:CONFLUENCE_API_TOKEN = 'xxx'
     .\scripts\publish-md-pdf.ps1 https://example.atlassian.net/wiki/x/AbCdEf
+
+.EXAMPLE
+    $env:GITHUB_TOKEN = (gh auth token)
+    .\scripts\publish-md-pdf.ps1 https://github.com/B-AROL-O/publish-md-pdf/pull/16
 
 .LINK
     https://github.com/B-AROL-O/publish-md-pdf
@@ -95,6 +105,12 @@ function Test-IsUrl {
     return $Value -match '^https?://'
 }
 
+# The same shape test as the image's own is_github_url (lib/fetch-github.sh).
+function Test-IsGitHubUrl {
+    param([Parameter(Mandatory = $true)][string]$Value)
+    return $Value -cmatch '^https?://[^/]+/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(issues|pull)/[0-9]+([/?#]|$)'
+}
+
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     Write-ErrorLine "ERROR: 'docker' is not installed or not on PATH. Install Docker Desktop: https://docs.docker.com/desktop/setup/install/windows-install/"
     exit 1
@@ -110,11 +126,13 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # Which format is in effect decides what the file inputs must look like. The
-# image applies the same default - pdf, unless every input is a URL, in which
-# case the page's own Markdown - so only an explicit -Format is passed on.
+# image applies the same default - pdf, unless every input is a Confluence URL,
+# in which case the page's own Markdown - so only an explicit -Format is passed
+# on.
 $effectiveFormat = $Format
 if (-not $effectiveFormat) {
-    $effectiveFormat = if (@($InputPath | Where-Object { -not (Test-IsUrl $_) }).Count -eq 0) { 'md' } else { 'pdf' }
+    $notConfluence = @($InputPath | Where-Object { -not (Test-IsUrl $_) -or (Test-IsGitHubUrl $_) })
+    $effectiveFormat = if ($notConfluence.Count -eq 0) { 'md' } else { 'pdf' }
 }
 
 if ($effectiveFormat -eq 'md') {
@@ -243,9 +261,10 @@ foreach ($item in $expandedInputs) {
     $cliArgs.Add((Get-ContainerPath $item))
 }
 
-# The image reads Confluence credentials from the environment only, so they are
-# forwarded by name: passing them as -e VAR=value would expose the API token in
-# the process list. ATLASSIAN_* is accepted as an alias for either.
+# The image reads Confluence and GitHub credentials from the environment only,
+# so they are forwarded by name: passing them as -e VAR=value would expose the
+# token in the process list. ATLASSIAN_* is accepted as an alias for either
+# Confluence variable.
 if (-not $env:CONFLUENCE_EMAIL -and $env:ATLASSIAN_EMAIL) {
     $env:CONFLUENCE_EMAIL = $env:ATLASSIAN_EMAIL
 }
@@ -256,7 +275,8 @@ if (-not $env:CONFLUENCE_API_TOKEN -and $env:ATLASSIAN_API_TOKEN) {
 $envArgs = [System.Collections.Generic.List[string]]::new()
 # PUBLISH_MD_PDF_ALLOW_INSECURE lets the image fetch over plain http, for a
 # local test server; it is forwarded so it can be set without editing this.
-foreach ($name in @('CONFLUENCE_EMAIL', 'CONFLUENCE_API_TOKEN', 'PUBLISH_MD_PDF_ALLOW_INSECURE')) {
+foreach ($name in @('CONFLUENCE_EMAIL', 'CONFLUENCE_API_TOKEN', 'GITHUB_TOKEN', 'GH_TOKEN',
+        'GITHUB_SERVER_URL', 'GITHUB_API_URL', 'PUBLISH_MD_PDF_ALLOW_INSECURE')) {
     if ([Environment]::GetEnvironmentVariable($name)) {
         $envArgs.AddRange([string[]]@('-e', $name))
     }

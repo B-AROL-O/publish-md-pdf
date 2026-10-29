@@ -128,6 +128,24 @@ adding a format means adding a module plus one row to the `case "$format"` block
   `confluence_safe_basename` (in `lib/common.sh`) sanitizes an attachment's title before it's used
   as a filename, since that title is server-controlled text this tool writes straight to disk.
 
+- `lib/fetch-github.sh` handles a GitHub issue/PR URL (`is_github_url` is checked _before_
+  `is_url`, so such a URL never reaches the Confluence importer). It fetches the issue, its
+  comments and — for a PR — the pull, reviews, review comments, commits and files, then renders
+  them in one pass with `lib/github-md.jq`, a jq _module_ (definitions only, loaded with
+  `-L lib` + `include "github-md"`) so `tests/test_fetch_github.sh` can call each helper directly.
+  The image ships jq **1.6** (bookworm), not 1.7: keywords such as `$end` aren't valid variable
+  names there, and `if` needs an `else` — a 1.7-only construct passes every local test and then
+  fails inside the container. The result is ordinary Markdown, so every `--format` is just the
+  `.md` conversion from there, with no bridge through `convert_md_file`. Three things are
+  load-bearing: `github_api_base` maps only github.com, `*.ghe.com` and an explicit
+  `GITHUB_SERVER_URL`→`GITHUB_API_URL` pair to an API host, since the token goes wherever it
+  points; pagination requests pages by number rather than following the `Link` header, so no URL
+  out of a response is fetched with the token; and `github_fetch_images` downloads an uploaded
+  image through the pre-signed URL in the API response's `body_html` (matched by the asset's UUID) with no
+  credentials, falling back to the original URL with the token only when it's on the issue's own
+  origin — a `user-attachments` URL in a private repository needs a browser session that a token
+  doesn't stand in for.
+
 ### Host-side wrappers under `scripts/`
 
 `scripts/publish-md-pdf.sh` and `scripts/publish-md-pdf.ps1` are _host_ wrappers around
@@ -145,8 +163,8 @@ load-bearing rather than incidental:
 - Host paths are translated into the container's view: `$PWD` is bind-mounted at `/workspace`, and
   anything outside it gets `/mnt/extra-N`. The image's `INFO:`/`ERROR:` output is then translated
   back, highest `N` first, so `/mnt/extra-1` can't eat the prefix of `/mnt/extra-10`.
-- Confluence credentials are forwarded **by name** (`-e CONFLUENCE_EMAIL`), never as
-  `-e VAR=value`, which would put the API token in the process list.
+- Confluence and GitHub credentials are forwarded **by name** (`-e CONFLUENCE_EMAIL`,
+  `-e GITHUB_TOKEN`), never as `-e VAR=value`, which would put the token in the process list.
 - `--user`/`HOME=/tmp` are added only on a non-Windows host: Docker Desktop already maps ownership
   back, and `id -u` doesn't exist there. `HOME=/tmp` is what keeps Mermaid rendering working under
   a UID with no `/etc/passwd` entry — see the same note in `README.md`.
