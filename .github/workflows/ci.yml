@@ -753,6 +753,7 @@ jobs:
             -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
             http://127.0.0.1:18086/o/r/pull/2/files
           test -s r-pr-2.pdf
+          sudo apt-get update
           sudo apt-get install -y poppler-utils
           pdftotext r-pr-2.pdf r-pr-2.txt
           for expected in "Merged" "requested changes" "src/main.sh" "Why echo b?" \
