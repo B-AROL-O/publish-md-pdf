@@ -71,7 +71,7 @@ RUN chmod +x /usr/local/bin/publish-md-pdf.sh /usr/local/bin/md-to-confluence.sh
 
 WORKDIR /workspace
 
-HEALTHCHECK --interval=5m --timeout=3s CMD pandoc --version && weasyprint --version || exit 1
+HEALTHCHECK --interval=5m --timeout=3s CMD ["sh", "-c", "pandoc --version && weasyprint --version || exit 1"]
 
 # Default entrypoint mirrors the CLI (`docker run <image> [flags] file.md ...`).
 # The GitHub Action overrides this with entrypoint.sh (see action.yml), which
