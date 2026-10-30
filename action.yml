@@ -8,11 +8,13 @@ branding:
 inputs:
   files:
     description:
-      "Space-separated list of files and/or Confluence Cloud page URLs to convert
-      (files are glob-expanded by the shell); Markdown for format 'pdf' or 'confluence',
-      Confluence Storage Format (.confluence) for format 'md'. A URL is fetched via the
-      REST API (see docs/confluence-authentication.md for the required CONFLUENCE_EMAIL
-      and CONFLUENCE_API_TOKEN env vars) instead of read as a file."
+      "Space-separated list of files, Confluence Cloud page URLs and/or GitHub issue or
+      pull request URLs to convert (files are glob-expanded by the shell); Markdown for
+      format 'pdf' or 'confluence', Confluence Storage Format (.confluence) for format 'md'.
+      A URL is fetched via the REST API instead of read as a file: a Confluence page needs
+      the CONFLUENCE_EMAIL and CONFLUENCE_API_TOKEN env vars (see
+      docs/confluence-authentication.md), a GitHub issue or pull request needs GITHUB_TOKEN
+      (optional for a public github.com repository)."
     required: true
   format:
     description:
@@ -36,9 +38,10 @@ inputs:
     default: ""
   attachments:
     description:
-      "Whether to download the attachments of a fetched Confluence Cloud page, so that its
-      images and file links resolve. Set to 'false' to skip the downloads; references are
-      still rewritten, but point at files that were never downloaded"
+      "Whether to download the attachments of a fetched Confluence Cloud page, and the
+      images of a fetched GitHub issue or pull request, so that they resolve. Set to 'false'
+      to skip the downloads; Confluence references are still rewritten, but point at files
+      that were never downloaded, and GitHub images stay remote URLs"
     required: false
     default: "true"
 
