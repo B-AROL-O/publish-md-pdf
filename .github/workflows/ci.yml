@@ -93,6 +93,7 @@ jobs:
 
       - name: Verify Mermaid diagram was rendered as an image, not literal code
         run: |
+          sudo apt-get update
           sudo apt-get install -y poppler-utils
           if pdftotext sample-mermaid.pdf - | grep -q "erDiagram"; then
             echo "ERROR: Mermaid diagram rendered as literal code, not an image"
@@ -514,6 +515,7 @@ jobs:
           # The temp directory attachments were downloaded into on the way to
           # rendering is gone; nothing was left behind in the workspace.
           test ! -d page-attachments
+          sudo apt-get update
           sudo apt-get install -y poppler-utils
           [ "$(pdfimages -list page.pdf | tail -n +3 | wc -l)" -ge 1 ] || {
             echo "ERROR: expected at least one embedded image in page.pdf"
@@ -634,8 +636,10 @@ jobs:
           grep -q "deprecated" shim-stderr.txt
           rm -f sample.confluence shim-stderr.txt
 
+      # Kept as `./` rather than zizmor's suggested `$/`: the self-test is meant
+      # to exercise the action.yml in this checkout, exactly as before.
       - name: Action self-test
-        uses: ./
+        uses: ./ # zizmor: ignore[self-repository]
         with:
           files: sample.md
           output-dir: .
@@ -647,7 +651,7 @@ jobs:
           rm -f sample-via-action.pdf
 
       - name: Action self-test - Confluence format
-        uses: ./
+        uses: ./ # zizmor: ignore[self-repository]
         with:
           files: sample.md
           format: confluence
