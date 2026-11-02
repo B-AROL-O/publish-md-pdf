@@ -11,7 +11,8 @@ permissions:
 jobs:
   release:
     name: Build & publish image to GHCR
-    runs-on: ubuntu-latest
+    # Pinned, like ci.yml's runner -- see the comment there (#45).
+    runs-on: ubuntu-26.04
     permissions:
       # write, not read: the last step moves the major git tag (see below).
       contents: write

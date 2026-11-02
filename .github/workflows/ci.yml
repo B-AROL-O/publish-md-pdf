@@ -13,7 +13,12 @@ permissions:
 jobs:
   build-and-test:
     name: Build image, smoke test, action self-test
-    runs-on: ubuntu-latest
+    # Pinned rather than ubuntu-latest, for the same reason the Dockerfile's base
+    # image is pinned by digest (#27): a moving label swaps the runner's own
+    # tools (pwsh, jq, openssl, apt, sudo) underneath CI without a commit to
+    # point at. ubuntu-latest had already moved to 26.04 when this was pinned
+    # (#45), with every step green there; bump all three workflows together.
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
 
