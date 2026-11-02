@@ -741,7 +741,8 @@ jobs:
           # ...and the other origin's image never fetched, still a remote URL.
           grep -qF '](http://localhost:18087/user-attachments/assets/33333333-3333-4333-8333-333333333333)' r-issue-1.md
           [ "$(find r-issue-1-attachments -type f | wc -l)" -eq 2 ]
-          rm -rf r-issue-1.md r-issue-1-attachments
+          # The container wrote the attachments directory as root.
+          sudo rm -rf r-issue-1.md r-issue-1-attachments
 
       - name: GitHub URL import - pull request, default format (pdf)
         run: |
