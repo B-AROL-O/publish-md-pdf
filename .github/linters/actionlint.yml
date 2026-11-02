@@ -7,6 +7,15 @@
 # "Dockerfile" image, so it always resolves the path relative to the repo and reports it
 # missing. See https://github.com/rhysd/actionlint/blob/main/rule_action.go
 # (checkLocalDockerActionRuns).
+#
+# self-hosted-runner declares a GitHub-hosted label actionlint doesn't know yet:
+# the workflows pin runs-on to ubuntu-26.04 (#45), and actionlint's built-in list
+# (1.7.12) stops at ubuntu-24.04. Drop the entry once a release recognizes it --
+# leaving it is harmless, but it would mask a typo in that one label.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
+
 paths:
   .github/workflows/ci.yml:
     ignore:
