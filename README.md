@@ -8,7 +8,9 @@ also convert Markdown to and from Confluence Storage Format (the XHTML-based fra
 REST API expects in its `body.storage.value` field) — see
 [Converting to/from Confluence](#converting-tofrom-confluence) — and import a Confluence Cloud page
 directly from its URL — see
-[Importing a Confluence page by URL](#importing-a-confluence-page-by-url).
+[Importing a Confluence page by URL](#importing-a-confluence-page-by-url). Given the URL of a GitHub
+issue or pull request, it prints that instead, comments and reviews included — see
+[Printing a GitHub issue or pull request](#printing-a-github-issue-or-pull-request).
 
 Shipped as a container image (`ghcr.io/b-arol-o/publish-md-pdf`) and as a Docker-based GitHub Action,
 so it can be used both as a local CLI (via `docker run`) and in CI.
@@ -26,10 +28,12 @@ flowchart TD
     EP["entrypoint.sh<br/>translates INPUT_* to flags"]
     MAIN["publish-md-pdf.sh<br/>parses --format, validates input, loops over files/URLs"]
     FETCH["lib/fetch-confluence.sh<br/>REST API, given a page URL"]
+    FETCHGH["lib/fetch-github.sh<br/>REST API, given an issue/PR URL"]
 
     GHA --> EP --> MAIN
     CLI --> MAIN
-    MAIN -->|input is a URL| FETCH --> MAIN
+    MAIN -->|input is a Confluence URL| FETCH --> MAIN
+    MAIN -->|input is a GitHub issue/PR URL| FETCHGH --> MAIN
 
     MAIN -->|--format pdf| PDF["lib/convert-pdf.sh<br/>pandoc, then WeasyPrint"]
     MAIN -->|--format confluence| CONF["lib/convert-confluence.sh<br/>pandoc, then macro post-processing"]
@@ -43,9 +47,10 @@ flowchart TD
 `lib/common.sh` holds the helpers every format shares (tool checks, input validation, output-name
 resolution). The conversion modules are sourced, not executed, and each one exposes the same two
 functions — `convert_<format>_init` and `convert_<format>_file` — so adding a format means adding a
-module and one row to the format table in `publish-md-pdf.sh`. `lib/fetch-confluence.sh` sits
-alongside them and is only invoked when an input is a URL — see
-[Importing a Confluence page by URL](#importing-a-confluence-page-by-url).
+module and one row to the format table in `publish-md-pdf.sh`. `lib/fetch-confluence.sh` and
+`lib/fetch-github.sh` sit alongside them and are only invoked when an input is a URL — see
+[Importing a Confluence page by URL](#importing-a-confluence-page-by-url) and
+[Printing a GitHub issue or pull request](#printing-a-github-issue-or-pull-request).
 
 ## Usage
 
@@ -129,6 +134,10 @@ documents you convert**, as `scripts/publish-md-pdf.sh` / `scripts/publish-md-pd
 $env:CONFLUENCE_EMAIL = 'you@example.com'
 $env:CONFLUENCE_API_TOKEN = 'your-api-token'
 .\scripts\publish-md-pdf.ps1 https://your-site.atlassian.net/wiki/x/AbCdEf
+
+# Print a GitHub pull request (the token is optional for a public github.com repository)
+$env:GITHUB_TOKEN = (gh auth token)
+.\scripts\publish-md-pdf.ps1 https://github.com/B-AROL-O/publish-md-pdf/pull/16
 ```
 
 ```bash
@@ -192,7 +201,7 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\publish-md-pdf.ps1 report.md
 
 | Input         | Required | Description                                                                                                 |
 | ------------- | -------- | ----------------------------------------------------------------------------------------------------------- |
-| `files`       | yes      | Space-separated list of files and/or Confluence Cloud page URLs to convert                                  |
+| `files`       | yes      | Space-separated list of files, Confluence Cloud page URLs and/or GitHub issue/PR URLs to convert            |
 | `format`      | no       | `pdf` (default), `confluence`, or `md` — see [Converting to/from Confluence](#converting-tofrom-confluence) |
 | `output-dir`  | no       | Directory to write the output file(s) into (default: repository root)                                       |
 | `output-name` | no       | Filename for the output; only valid with a single input                                                     |
@@ -200,16 +209,20 @@ pwsh -ExecutionPolicy Bypass -File .\scripts\publish-md-pdf.ps1 report.md
 | `attachments` | no       | `true` (default) or `false` — download a fetched page's attachments (see below)                             |
 
 Uploading or committing the resulting file(s) is the consumer's job (e.g. `actions/upload-artifact`).
-A URL input needs `CONFLUENCE_EMAIL` and `CONFLUENCE_API_TOKEN` set via the step's `env:` — see
-[Importing a Confluence page by URL](#importing-a-confluence-page-by-url).
+A Confluence URL input needs `CONFLUENCE_EMAIL` and `CONFLUENCE_API_TOKEN` set via the step's `env:` —
+see [Importing a Confluence page by URL](#importing-a-confluence-page-by-url); a GitHub issue/PR URL
+needs `GITHUB_TOKEN` — see [Printing a GitHub issue or pull request](#printing-a-github-issue-or-pull-request).
 
 ### Environment variables
 
-| Variable                        | Required                               | Description                                                                                               |
-| ------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `CONFLUENCE_EMAIL`              | only when an input is a Confluence URL | Confluence Cloud account email, used for Basic Auth against the REST API                                  |
-| `CONFLUENCE_API_TOKEN`          | only when an input is a Confluence URL | Confluence Cloud API token, used for Basic Auth against the REST API                                      |
-| `PUBLISH_MD_PDF_ALLOW_INSECURE` | no                                     | Set to `1` to allow fetching a Confluence URL over plain `http://` (a local test server only — see below) |
+| Variable                        | Required                               | Description                                                                                    |
+| ------------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `CONFLUENCE_EMAIL`              | only when an input is a Confluence URL | Confluence Cloud account email, used for Basic Auth against the REST API                       |
+| `CONFLUENCE_API_TOKEN`          | only when an input is a Confluence URL | Confluence Cloud API token, used for Basic Auth against the REST API                           |
+| `GITHUB_TOKEN` (or `GH_TOKEN`)  | only when an input is a GitHub URL     | Token that can read the repository; optional for a public repository on github.com             |
+| `GITHUB_SERVER_URL`             | no                                     | With `GITHUB_API_URL`, where a GitHub Enterprise Server's API is — see below                   |
+| `GITHUB_API_URL`                | no                                     | With `GITHUB_SERVER_URL`, where a GitHub Enterprise Server's API is — see below                |
+| `PUBLISH_MD_PDF_ALLOW_INSECURE` | no                                     | Set to `1` to allow fetching a URL over plain `http://` (a local test server only — see below) |
 
 Pass them as `-e CONFLUENCE_EMAIL -e CONFLUENCE_API_TOKEN` to `docker run` (reading the values from
 your own shell environment, so they never appear in `docker run`'s argv or shell history), or via the
@@ -265,13 +278,15 @@ For a step-by-step guide to getting the resulting `.confluence` file into a real
 
 ## Importing a Confluence page by URL
 
-Any input starting with `http://` or `https://` is fetched from Confluence Cloud's REST API instead
-of being read as a file, and converted the same way a local `.confluence` file would be. This covers
-tiny links, the current UI's `.../spaces/KEY/pages/<id>/Title` URLs, `?pageId=<id>` URLs, and legacy
-`.../display/KEY/Title` URLs — Confluence Cloud only (Server/Data Center isn't supported).
+Any input starting with `http://` or `https://` — other than a
+[GitHub issue or pull request URL](#printing-a-github-issue-or-pull-request) — is fetched from
+Confluence Cloud's REST API instead of being read as a file, and converted the same way a local
+`.confluence` file would be. This covers tiny links, the current UI's
+`.../spaces/KEY/pages/<id>/Title` URLs, `?pageId=<id>` URLs, and legacy `.../display/KEY/Title` URLs —
+Confluence Cloud only (Server/Data Center isn't supported).
 
 ```bash
-# Fetch and convert to Markdown (the default --format when every input is a URL)
+# Fetch and convert to Markdown (the default --format when every input is a Confluence URL)
 docker run --rm -v "$PWD:/workspace" \
   -e CONFLUENCE_EMAIL -e CONFLUENCE_API_TOKEN \
   ghcr.io/b-arol-o/publish-md-pdf:v2 \
@@ -306,7 +321,7 @@ step's `env:` (never as a plain `with:` input, since those are more prone to app
 See [docs/confluence-authentication.md](docs/confluence-authentication.md) for how to find your
 account email and create the API token.
 
-Without `--format`, a URL input defaults to `md` rather than `pdf` — a fetched page's native format
+Without `--format`, a Confluence URL input defaults to `md` rather than `pdf` — a fetched page's native format
 is Confluence Storage Format, so converting it to Markdown is the more directly useful default. Mix
 a URL with a `.md`/`.confluence` file in the same invocation and the default reverts to `pdf`
 (matching that file input), with the URL fetched and bridged through Markdown on the way there. Pass
@@ -386,6 +401,91 @@ conversion has never had to handle:
   no local file to point at.
 - Info/note/warning panels, `ac:layout`, page properties, `ac:structured-macro ac:name="status"`, and
   structured macros other than `code` generally.
+
+## Printing a GitHub issue or pull request
+
+Given the URL of a GitHub issue or pull request — `https://HOST/OWNER/REPO/issues/N` or
+`.../pull/N`, with anything after the number (`/files`, `#issuecomment-…`) ignored — the tool fetches
+it through the REST API and renders it as one document, A4 PDF by default:
+
+```bash
+docker run --rm -v "$PWD:/workspace" -e GITHUB_TOKEN \
+  ghcr.io/b-arol-o/publish-md-pdf:v2 \
+  https://github.com/B-AROL-O/publish-md-pdf/issues/42 \
+  https://github.com/B-AROL-O/publish-md-pdf/pull/16
+```
+
+That writes `publish-md-pdf-issue-42.pdf` and `publish-md-pdf-pr-16.pdf` — named after the repository,
+kind and number rather than the title, so the same issue always lands in the same file
+(`--output-name` overrides it, as usual). The document holds:
+
+- **A header table** — repository, number, state (open, closed with its reason, merged, draft),
+  author, dates, labels, assignees, milestone and, for a pull request, its branches, requested
+  reviewers and change counts.
+- **The description**, then **the conversation**: comments and, for a pull request, reviews, in date
+  order. A review shows its verdict ("approved these changes", "requested changes") and each of its
+  inline comment threads, headed by file and line, with the diff hunk the thread refers to and every
+  reply beneath it. Timeline events (labeled, assigned, referenced…) are not included.
+- **For a pull request**, a table of its **commits** (short SHA, subject, author, date) and of its
+  **changed files** (status and added/removed line counts). The diff itself is not included.
+
+Headings inside a description or comment are nested under the heading the tool puts above them (a
+description's `## What` becomes an `###`), so the PDF's outline follows the conversation rather than
+whatever level each author happened to pick.
+
+`--format md` writes the Markdown instead, with YAML front matter (`title`, `source_url`,
+`github_repository`, `github_number`, `github_kind`), and `--format confluence` converts that to
+Confluence Storage Format. Unlike a Confluence URL, a GitHub URL defaults to `pdf`, even when every
+input is one.
+
+### Hosts and authentication
+
+| Host                                 | REST API used                   | Token                            |
+| ------------------------------------ | ------------------------------- | -------------------------------- |
+| `github.com`                         | `https://api.github.com`        | optional for a public repository |
+| `SUBDOMAIN.ghe.com` (data residency) | `https://api.SUBDOMAIN.ghe.com` | required                         |
+| GitHub Enterprise Server             | `GITHUB_API_URL`, see below     | required                         |
+| anything else                        | — refused                       | never sent                       |
+
+The token is read from `GITHUB_TOKEN`, or `GH_TOKEN` if that's unset (so `GH_TOKEN=$(gh auth token)`
+works), and needs read access to the repository's issues and pull requests (a fine-grained token's
+"Issues" and "Pull requests" read permissions, or the classic `repo` scope for a private
+repository). Without one, github.com allows 60 API requests an hour, and a pull request costs about
+seven.
+
+The API host is never derived from the URL beyond the table above, because that's where the token
+goes. For a GitHub Enterprise Server, set `GITHUB_SERVER_URL` to its web address and
+`GITHUB_API_URL` to its API base (usually `https://HOST/api/v3`); a URL on that host then uses that
+API. GitHub Actions sets both variables on every runner, so in a workflow the Action reads issues
+from its own server — github.com, GHE.com or GHES — with nothing more than the token:
+
+```yaml
+- uses: B-AROL-O/publish-md-pdf@v2
+  with:
+    files: ${{ github.event.issue.html_url }}
+  env:
+    GITHUB_TOKEN: ${{ github.token }}
+```
+
+As with Confluence, sending the token over plain HTTP is refused unless
+`PUBLISH_MD_PDF_ALLOW_INSECURE=1` is set.
+
+### Images
+
+Images uploaded into a description or comment (`github.com/user-attachments/assets/…`, or the
+older `/OWNER/REPO/assets/…`) are downloaded and embedded, so they render for a private repository
+too. With `--format md` they go into a `<output-name>-attachments/` directory next to the Markdown
+file, like a Confluence page's attachments; with `--format pdf` into a temporary directory that's
+removed afterwards. `--no-attachments` (the Action's `attachments: false`) skips this and leaves
+them as remote URLs, as does `--format confluence`.
+
+For a private repository, such an image URL needs a signed-in browser session — an API token
+doesn't open it. The HTML the API renders for the same comment carries a short-lived pre-signed URL
+for each image, though, so the tool downloads that one instead, with no credentials at all. Only
+an image with no pre-signed counterpart is fetched from its original URL with the token, and only
+when it's on the issue's own host. An image hosted anywhere else is left for WeasyPrint to fetch
+as it would any other remote image, without the token. A failed download is a warning, not an
+error: the image stays a remote URL.
 
 ## Rendering Mermaid diagrams
 

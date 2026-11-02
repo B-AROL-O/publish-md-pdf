@@ -2,8 +2,8 @@
 # ==========================================================
 # Convert Markdown to A4-sized PDF or Confluence Storage Format, and
 # Confluence Storage Format back to Markdown. An input may also be a
-# Confluence Cloud page URL, fetched via the REST API instead of read
-# from disk.
+# Confluence Cloud page URL or a GitHub issue/pull request URL, fetched via
+# the respective REST API instead of read from disk.
 #
 # This is the single entry point for every conversion this tool performs;
 # --format selects which one. The GitHub Action reaches the same flags via
@@ -28,13 +28,16 @@ source "$SCRIPT_DIR/lib/convert-confluence.sh"
 source "$SCRIPT_DIR/lib/convert-md.sh"
 # shellcheck source=lib/fetch-confluence.sh
 source "$SCRIPT_DIR/lib/fetch-confluence.sh"
+# shellcheck source=lib/fetch-github.sh
+source "$SCRIPT_DIR/lib/fetch-github.sh"
 
 usage() {
 	echo "Usage: $0 [--format FORMAT] [--output-dir DIR] [--output-name NAME] [--css-file FILE] <file|url> [file2|url2 ...]"
-	echo "Converts each input file (or fetched Confluence page) to the requested FORMAT."
+	echo "Converts each input file (or fetched Confluence page, GitHub issue or pull request)"
+	echo "to the requested FORMAT."
 	echo
 	echo "  --format FORMAT     Conversion to perform (default: pdf; default: md if every"
-	echo "                      input is a URL):"
+	echo "                      input is a Confluence URL):"
 	echo "                        pdf         Markdown (.md) to A4-sized PDF"
 	echo "                        confluence  Markdown (.md) to Confluence Storage Format"
 	echo "                        md          Confluence Storage Format to Markdown"
@@ -46,13 +49,17 @@ usage() {
 	echo "  --css-file FILE     Stylesheet to use (default: publish-md-pdf.css); only valid"
 	echo "                      with --format pdf. A custom stylesheet should keep the"
 	echo "                      .task-checkbox rules from the default one to render task lists"
-	echo "  --no-attachments    Don't download the attachments of a fetched Confluence page."
-	echo "                      Image and file references are still rewritten, but point at"
-	echo "                      files that were never downloaded"
+	echo "  --no-attachments    Don't download the attachments of a fetched Confluence page,"
+	echo "                      nor the images of a fetched GitHub issue. Confluence references"
+	echo "                      are still rewritten, but point at files that were never"
+	echo "                      downloaded; GitHub images stay remote URLs"
 	echo
-	echo "An input starting with http:// or https:// is fetched as a Confluence Cloud page"
-	echo "(see docs/confluence-authentication.md for the required CONFLUENCE_EMAIL and"
-	echo "CONFLUENCE_API_TOKEN environment variables), instead of being read as a file."
+	echo "An input of the form https://HOST/OWNER/REPO/issues/N or .../pull/N is fetched as a"
+	echo "GitHub issue or pull request (github.com or SUBDOMAIN.ghe.com; a token in GITHUB_TOKEN"
+	echo "or GH_TOKEN is optional for public github.com repositories and required otherwise)."
+	echo "Any other input starting with http:// or https:// is fetched as a Confluence Cloud"
+	echo "page (see docs/confluence-authentication.md for the required CONFLUENCE_EMAIL and"
+	echo "CONFLUENCE_API_TOKEN environment variables). Anything else is read as a file."
 }
 
 format="pdf"
@@ -118,14 +125,16 @@ while [ $# -gt 0 ]; do
 done
 
 # A fetched Confluence page's native format is Confluence Storage Format, so
-# when every remaining input is a URL and --format wasn't given explicitly,
-# "md" (fetch and convert to Markdown) is the more useful default than "pdf".
-# A mix of files and URLs keeps the "pdf" default, and the URL input(s) get
-# bridged through md on their way to pdf (see the conversion loop below).
+# when every remaining input is a Confluence URL and --format wasn't given
+# explicitly, "md" (fetch and convert to Markdown) is the more useful default
+# than "pdf". A mix of files and URLs keeps the "pdf" default, and the URL
+# input(s) get bridged through md on their way to pdf (see the conversion loop
+# below). A GitHub URL keeps "pdf" too: printing an issue or pull request is
+# what fetching one is for (#42).
 if [ "$format_given" -eq 0 ] && [ $# -gt 0 ]; then
 	all_urls=1
 	for arg in "$@"; do
-		if ! is_url "$arg"; then
+		if ! is_url "$arg" || is_github_url "$arg"; then
 			all_urls=0
 			break
 		fi
@@ -174,15 +183,20 @@ if [ "$css_file_given" -eq 1 ] && [ "$format" != "pdf" ]; then
 fi
 
 has_url_input=0
+has_github_input=0
 for arg in "$@"; do
-	if is_url "$arg"; then
+	if is_github_url "$arg"; then
+		has_github_input=1
+	elif is_url "$arg"; then
 		has_url_input=1
-		break
 	fi
 done
 
 mkdir -p "$output_dir"
 "convert_${format}_init"
+if [ "$has_github_input" -eq 1 ]; then
+	github_fetch_init
+fi
 if [ "$has_url_input" -eq 1 ]; then
 	confluence_fetch_init
 	# pdf/confluence bridge a fetched page through convert_md_file (see below);
@@ -193,6 +207,54 @@ if [ "$has_url_input" -eq 1 ]; then
 fi
 
 for input_file in "$@"; do
+	if is_github_url "$input_file"; then
+		# The fetched issue is Markdown already, so every format is just the
+		# ordinary .md conversion from here -- no bridge through convert_md_file.
+		github_dir="$(mktemp -d)"
+		register_cleanup "$github_dir"
+		md_tmp="$github_dir/issue.md"
+
+		echo "INFO: Fetching $input_file"
+		github_fetch_issue "$input_file" "$md_tmp" "$github_dir"
+
+		case "$format" in
+		md)
+			out_name="$(resolve_output_name "$GITHUB_FETCH_SLUG.md" md md "$output_name")"
+			out_file="$output_dir/$out_name"
+			# Next to the Markdown file and referenced relatively, as with a
+			# Confluence page's attachments, so the two move together.
+			if [ "$fetch_attachments" -eq 1 ]; then
+				github_fetch_images "$md_tmp" "$github_dir" \
+					"$output_dir/${out_name%.md}-attachments" "${out_name%.md}-attachments"
+			fi
+			cat "$md_tmp" >"$out_file"
+			;;
+		pdf)
+			# Downloaded next to the temp Markdown file, which convert_pdf_file
+			# resolves relative paths against; WeasyPrint embeds them, and the
+			# cleanup trap removes the directory.
+			if [ "$fetch_attachments" -eq 1 ]; then
+				github_fetch_images "$md_tmp" "$github_dir" "$github_dir/assets" "assets"
+			fi
+			out_name="$(resolve_output_name "$GITHUB_FETCH_SLUG.md" md pdf "$output_name")"
+			out_file="$output_dir/$out_name"
+			convert_pdf_file "$md_tmp" "$out_file"
+			;;
+		confluence)
+			# Like a fetched Confluence page in this format, nothing is
+			# downloaded: images stay URLs, which Confluence can still render
+			# for a public repository.
+			out_name="$(resolve_output_name "$GITHUB_FETCH_SLUG.md" md confluence "$output_name")"
+			out_file="$output_dir/$out_name"
+			convert_confluence_file "$md_tmp" "$out_file"
+			;;
+		esac
+
+		echo "INFO: Fetched $input_file (\"$GITHUB_FETCH_TITLE\") -> $out_file"
+		echo "INFO: Wrote $out_file ($(du -h "$out_file" | cut -f1))"
+		continue
+	fi
+
 	if is_url "$input_file"; then
 		confluence_tmp="$(mktemp --suffix=.confluence)"
 		register_cleanup "$confluence_tmp"
