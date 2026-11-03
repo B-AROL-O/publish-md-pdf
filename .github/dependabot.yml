@@ -11,7 +11,12 @@
 version: 2
 updates:
   - package-ecosystem: "github-actions"
-    directory: "/"
+    # "/" covers the workflows and the root action.yml, but not a local
+    # composite action, whose own pinned "uses:" lines would otherwise never
+    # get bumped -- hence the second entry (#28).
+    directories:
+      - "/"
+      - "/.github/actions/*"
     schedule:
       interval: "weekly"
     # A new action release could be a compromised one nobody's noticed yet;

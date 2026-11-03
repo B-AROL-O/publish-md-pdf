@@ -43,12 +43,22 @@ any of them:
 ```
 
 Anything that shells out to pandoc/WeasyPrint or talks to the REST API is covered instead by the
-integration steps in `.github/workflows/ci.yml`, each an independent `docker run` plus an assertion.
-To run one of those locally, build the image first, then copy the relevant step's commands — e.g.
+integration steps in `.github/workflows/ci.yml`, each a run of the image plus an assertion. The
+workflow is one job per area (#28): `unit-tests` gates `build`, which builds the image once and
+uploads it as an artifact, and the area jobs (`smoke`, `host-wrappers`, `confluence-import`,
+`github-import`, `action-self-test`) each load it with `.github/actions/load-ci-image` and run in
+parallel. A step that adds coverage goes into the job for its area. Steps run the image through
+`.github/scripts/run-ci-image.sh`, which adds the workspace mount and the host network and forwards
+the mock credentials by name from the step's environment: the import jobs set those once in their
+job-level `env:`, and a negative test overrides or empties one in its own step's `env:`. The GitHub
+mock's settings travel as `MOCK_GITHUB_*` for the reason that script's header gives.
+
+To run a step locally, build the image first, then run the step's commands from the repository
+root. The helper works outside CI too, as long as the step's job-level `env:` is exported — e.g.
 the Mermaid rendering check:
 
 ```bash
-docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 sample-mermaid.md
+.github/scripts/run-ci-image.sh sample-mermaid.md
 pdftotext sample-mermaid.pdf - | grep -q erDiagram && echo "FAIL: rendered as literal code, not an image"
 ```
 
@@ -61,7 +71,7 @@ Linting is `super-linter/slim` over the whole codebase (`.github/workflows/lint.
 `VALIDATE_ALL_CODEBASE: true`), plus `.markdownlint.json` (120-char line length, tables/code blocks
 exempt) and `biome.json` (2-space indent) for any JSON/JS. There's no local lint script; the
 fastest local check for a shell change is
-`shellcheck -x lib/*.sh publish-md-pdf.sh entrypoint.sh tests/*.sh` — note `-x`, which is what
+`shellcheck -x lib/*.sh publish-md-pdf.sh entrypoint.sh tests/*.sh .github/scripts/*.sh` — note `-x`, which is what
 super-linter uses, and without which every `source` line reports a spurious SC1091.
 
 ## Architecture
@@ -171,7 +181,7 @@ load-bearing rather than incidental:
 
 They're documented under "As a host-side helper script" in `README.md` and meant to be copied into
 a documentation repository, so a change here is a change other repositories will copy. The CI
-steps named "Host wrapper …" cover both against the locally built image; `PUBLISH_MD_PDF_IMAGE`
+job `host-wrappers` covers both against the locally built image; `PUBLISH_MD_PDF_IMAGE`
 overrides the tag they run.
 
 Two scripts, `md-to-confluence.sh` and `confluence-to-md.sh`, are deprecated v1 compatibility
