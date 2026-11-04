@@ -13,6 +13,16 @@
 # that tag, not by hand.
 FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
 
+# Static OCI metadata. "source" is what links the GHCR package to this repository. The
+# description is repeated as an index annotation in release.yml, because the pushed artifact is
+# an image index (build-push-action adds a provenance attestation) and GHCR reads an index's
+# description from its annotations, not from this image config label. Keep the two in sync with
+# action.yml's "description". Version and revision are per-build, so release.yml sets them.
+LABEL org.opencontainers.image.title="publish-md-pdf" \
+      org.opencontainers.image.description="Render Markdown files to A4-sized PDF, or convert to/from Confluence Storage Format" \
+      org.opencontainers.image.source="https://github.com/B-AROL-O/publish-md-pdf" \
+      org.opencontainers.image.licenses="MIT"
+
 # fonts-noto-color-emoji is a rendering dependency, not a nicety: the only fonts
 # otherwise present are the DejaVu family that weasyprint/chromium pull in, and
 # DejaVu has no glyph for any emoji outside a handful of dingbats. WeasyPrint

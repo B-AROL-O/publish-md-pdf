@@ -78,6 +78,18 @@ jobs:
           context: .
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+          # Per-build OCI metadata; the static labels are in the Dockerfile.
+          labels: |
+            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          # The pushed artifact is an image index (provenance attestation), and GHCR takes the
+          # package description from the index's annotations, not from the image's labels --
+          # without this the package page says "No description provided". Keep in sync with
+          # the Dockerfile's description label.
+          annotations: |
+            index:org.opencontainers.image.description=Render Markdown files to A4-sized PDF, or convert to/from Confluence Storage Format
+            index:org.opencontainers.image.source=https://github.com/B-AROL-O/publish-md-pdf
+            index:org.opencontainers.image.licenses=MIT
 
       # The image's :v<major> tag moves on every release, but "uses:
       # B-AROL-O/publish-md-pdf@v<major>" resolves action.yml from the *git* ref,
