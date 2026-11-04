@@ -10,14 +10,25 @@ on:
 permissions:
   contents: read
 
+# One job per area, so a red run names the area that broke instead of a step
+# number, and an early failure no longer hides every step after it (#28). The
+# unit tests gate the image build; the build saves the image once, and every
+# job after it loads that same image (.github/actions/load-ci-image) and runs
+# in parallel (its "uses: ./..." carries the same zizmor self-repository
+# ignore, and reason, as the Action self-test's). Steps call the image through
+# .github/scripts/run-ci-image.sh, and the Confluence/GitHub import jobs
+# declare their mock settings once, in the job's env:, which a negative test
+# overrides in its own step's env:.
+#
+# Every job pins runs-on: ubuntu-26.04 rather than ubuntu-latest, for the same
+# reason the Dockerfile's base image is pinned by digest (#27): a moving label
+# swaps the runner's own tools (pwsh, jq, openssl, apt, sudo) underneath CI
+# without a commit to point at. ubuntu-latest had already moved to 26.04 when
+# this was pinned (#45), with every step green there; bump every job here,
+# lint.yml and release.yml together.
 jobs:
-  build-and-test:
-    name: Build image, smoke test, action self-test
-    # Pinned rather than ubuntu-latest, for the same reason the Dockerfile's base
-    # image is pinned by digest (#27): a moving label swaps the runner's own
-    # tools (pwsh, jq, openssl, apt, sudo) underneath CI without a commit to
-    # point at. ubuntu-latest had already moved to 26.04 when this was pinned
-    # (#45), with every step green there; bump all three workflows together.
+  unit-tests:
+    name: Unit tests
     runs-on: ubuntu-26.04
     permissions:
       contents: read
@@ -28,8 +39,172 @@ jobs:
         with:
           persist-credentials: false
 
-      # Runs before anything else needs the daemon, so this stop/start bracket
-      # doesn't collide with any other step in the job.
+      # The job the image build waits on: these cover the pure string
+      # functions in lib/ with no Docker, pandoc or network, so the whole
+      # suite finishes in well under a second and a cheap failure stops the
+      # run before a two-minute build, and everything after it, is spent.
+      - name: Unit tests
+        run: ./tests/run-tests.sh
+
+  build:
+    name: Build image
+    needs: unit-tests
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Tagged to match runs.image in action.yml, so the "Action self-test"
+      # job below resolves to this locally built image instead of pulling
+      # the published one.
+      - name: Build image
+        run: docker build -t ghcr.io/b-arol-o/publish-md-pdf:v2 .
+
+      # Surfaces the pandoc/weasyprint/chromium/nodejs/mermaid-cli versions the Dockerfile
+      # resolved in *this* build, in every run's log -- so a rendering regression can be
+      # checked against a version change here before looking anywhere else (see #27).
+      - name: Toolchain versions
+        run: |
+          docker run --rm --entrypoint cat \
+            ghcr.io/b-arol-o/publish-md-pdf:v2 /usr/local/share/toolchain-versions.txt
+
+      # Saved for the jobs below, each of which loads it into its own runner's
+      # Docker daemon (.github/actions/load-ci-image). Already gzipped, so
+      # compression-level 0 keeps upload-artifact from zipping it a second
+      # time; shell: bash is what turns on pipefail, so a failed docker save
+      # can't upload a truncated image.
+      - name: Save image
+        shell: bash
+        run: docker save ghcr.io/b-arol-o/publish-md-pdf:v2 | gzip -1 >"$RUNNER_TEMP/ci-image.tar.gz"
+
+      - name: Upload image
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-image
+          path: ${{ runner.temp }}/ci-image.tar.gz
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+  smoke:
+    name: Smoke tests
+    needs: build
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Load the CI image
+        uses: ./.github/actions/load-ci-image # zizmor: ignore[self-repository]
+
+      - name: Smoke test - render sample.md (default format)
+        run: |
+          .github/scripts/run-ci-image.sh sample.md
+          test -s sample.pdf
+          rm -f sample.pdf
+
+      - name: Smoke test - render sample-mermaid.md (Mermaid diagram)
+        run: |
+          .github/scripts/run-ci-image.sh sample-mermaid.md
+          test -s sample-mermaid.pdf
+
+      - name: Verify Mermaid diagram was rendered as an image, not literal code
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils
+          if pdftotext sample-mermaid.pdf - | grep -q "erDiagram"; then
+            echo "ERROR: Mermaid diagram rendered as literal code, not an image"
+            exit 1
+          fi
+          rm -f sample-mermaid.pdf
+
+      - name: Smoke test - convert sample.md to/from Confluence via --format
+        run: |
+          .github/scripts/run-ci-image.sh --format confluence sample.md
+          test -s sample.confluence
+          # Checkboxes became the ☐/☒ characters Confluence Storage Format
+          # has no native element for, not raw <input> HTML leaking straight
+          # into the page body pandoc generated it in.
+          grep -q '<li>☒ Render Markdown to HTML with pandoc</li>' sample.confluence
+          grep -q '<li>☐ Render HTML to PDF with WeasyPrint</li>' sample.confluence
+          if grep -q '<input' sample.confluence; then
+            echo "ERROR: raw <input> HTML leaked into sample.confluence"
+            exit 1
+          fi
+
+          .github/scripts/run-ci-image.sh \
+            --format md --output-name sample-roundtrip sample.confluence
+          test -s sample-roundtrip.md
+          # And converting back turned them into GFM task-list syntax again,
+          # not literal "☒ "/"☐ " text.
+          grep -q '\[x\] Render Markdown to HTML with pandoc' sample-roundtrip.md
+          grep -q '\[ \] Render HTML to PDF with WeasyPrint' sample-roundtrip.md
+
+          rm -f sample.confluence sample-roundtrip.md
+
+      - name: Verify --css-file is rejected with a non-pdf format
+        run: |
+          if .github/scripts/run-ci-image.sh \
+            --format confluence --css-file publish-md-pdf.css sample.md; then
+            echo "ERROR: --css-file with --format confluence should have failed"
+            exit 1
+          fi
+
+      - name: Verify an unknown --format is rejected
+        run: |
+          if .github/scripts/run-ci-image.sh --format bogus sample.md; then
+            echo "ERROR: an unknown --format should have failed"
+            exit 1
+          fi
+
+      # The v1 --entrypoint invocations must keep working until v3.0.0.
+      - name: Verify deprecated v1 entrypoint shims still work
+        run: |
+          docker run --rm -v "$PWD:/workspace" \
+            --entrypoint /usr/local/bin/md-to-confluence.sh \
+            ghcr.io/b-arol-o/publish-md-pdf:v2 sample.md
+          test -s sample.confluence
+
+          docker run --rm -v "$PWD:/workspace" \
+            --entrypoint /usr/local/bin/confluence-to-md.sh \
+            ghcr.io/b-arol-o/publish-md-pdf:v2 --output-name sample-roundtrip sample.confluence
+          test -s sample-roundtrip.md
+
+          rm -f sample.confluence sample-roundtrip.md
+
+      - name: Verify the deprecation shims warn on stderr
+        run: |
+          docker run --rm -v "$PWD:/workspace" \
+            --entrypoint /usr/local/bin/md-to-confluence.sh \
+            ghcr.io/b-arol-o/publish-md-pdf:v2 sample.md 2>shim-stderr.txt
+          grep -q "deprecated" shim-stderr.txt
+          rm -f sample.confluence shim-stderr.txt
+
+  host-wrappers:
+    name: Host wrappers
+    needs: build
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Runs before the image is loaded, while nothing else in this job needs
+      # the daemon, so this stop/start bracket can't collide with another step.
       - name: Host wrappers - detect a stopped Docker daemon
         run: |
           sudo systemctl stop docker.socket docker.service
@@ -64,76 +239,12 @@ jobs:
             exit 1
           }
 
-      # First, and before the image build: these cover the pure string
-      # functions in lib/ with no Docker, pandoc or network, so the whole
-      # suite finishes in well under a second and a cheap failure doesn't
-      # wait on a two-minute build to surface.
-      - name: Unit tests
-        run: ./tests/run-tests.sh
-
-      # Tagged to match runs.image in action.yml, so the "Action self-test"
-      # steps below resolve to this locally built image instead of pulling
-      # the published one.
-      - name: Build image
-        run: docker build -t ghcr.io/b-arol-o/publish-md-pdf:v2 .
-
-      # Surfaces the pandoc/weasyprint/chromium/nodejs/mermaid-cli versions the Dockerfile
-      # resolved in *this* build, in every run's log -- so a rendering regression can be
-      # checked against a version change here before looking anywhere else (see #27).
-      - name: Toolchain versions
-        run: |
-          docker run --rm --entrypoint cat \
-            ghcr.io/b-arol-o/publish-md-pdf:v2 /usr/local/share/toolchain-versions.txt
-
-      - name: Smoke test - render sample.md (default format)
-        run: |
-          docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 sample.md
-          test -s sample.pdf
-          rm -f sample.pdf
-
-      - name: Smoke test - render sample-mermaid.md (Mermaid diagram)
-        run: |
-          docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 sample-mermaid.md
-          test -s sample-mermaid.pdf
-
-      - name: Verify Mermaid diagram was rendered as an image, not literal code
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y poppler-utils
-          if pdftotext sample-mermaid.pdf - | grep -q "erDiagram"; then
-            echo "ERROR: Mermaid diagram rendered as literal code, not an image"
-            exit 1
-          fi
-          rm -f sample-mermaid.pdf
-
-      - name: Smoke test - convert sample.md to/from Confluence via --format
-        run: |
-          docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
-            --format confluence sample.md
-          test -s sample.confluence
-          # Checkboxes became the ☐/☒ characters Confluence Storage Format
-          # has no native element for, not raw <input> HTML leaking straight
-          # into the page body pandoc generated it in.
-          grep -q '<li>☒ Render Markdown to HTML with pandoc</li>' sample.confluence
-          grep -q '<li>☐ Render HTML to PDF with WeasyPrint</li>' sample.confluence
-          if grep -q '<input' sample.confluence; then
-            echo "ERROR: raw <input> HTML leaked into sample.confluence"
-            exit 1
-          fi
-
-          docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
-            --format md --output-name sample-roundtrip sample.confluence
-          test -s sample-roundtrip.md
-          # And converting back turned them into GFM task-list syntax again,
-          # not literal "☒ "/"☐ " text.
-          grep -q '\[x\] Render Markdown to HTML with pandoc' sample-roundtrip.md
-          grep -q '\[ \] Render HTML to PDF with WeasyPrint' sample-roundtrip.md
-
-          rm -f sample.confluence sample-roundtrip.md
+      - name: Load the CI image
+        uses: ./.github/actions/load-ci-image # zizmor: ignore[self-repository]
 
       # The two host-side wrappers under scripts/ are what a documentation repo
       # copies in; they must agree with each other and with the image's own CLI.
-      # Both default to the :v2 tag built above, so these resolve locally.
+      # Both default to the :v2 tag loaded above, so these resolve locally.
       # The mkdir'd directory is outside $PWD on purpose: it forces the extra
       # bind mount, whose container path each wrapper has to translate back.
       - name: Host wrapper (bash) - convert into a directory outside $PWD
@@ -190,15 +301,35 @@ jobs:
             exit 1
           fi
 
-      # Everything below exercises the "import a Confluence page by URL" feature
+  confluence-import:
+    name: Confluence URL import
+    needs: build
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    env:
+      CONFLUENCE_EMAIL: "mockuser@example.com"
+      CONFLUENCE_API_TOKEN: "mocktoken"
+      PUBLISH_MD_PDF_ALLOW_INSECURE: "1"
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Load the CI image
+        uses: ./.github/actions/load-ci-image # zizmor: ignore[self-repository]
+
+      # This job exercises the "import a Confluence page by URL" feature
       # (issue #10) against a local nginx mock -- no real Confluence Cloud
-      # instance or credentials involved. Both containers use --network host so
-      # the tool's container can reach the mock at 127.0.0.1.
+      # instance or credentials involved. Both containers use --network host
+      # (run-ci-image.sh adds it for the tool's) so the tool can reach the mock
+      # at 127.0.0.1; the mock credentials are the job's env: above.
       - name: Confluence URL import - build mock fixtures
         run: |
           mkdir -p /tmp/confluence-mock
-          docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
-            --format confluence sample.md
+          .github/scripts/run-ci-image.sh --format confluence sample.md
           jq -n --arg body "$(cat sample.confluence)" \
             '{id: "12345", title: "Sample document", spaceId: "98765",
               body: {storage: {value: $body, representation: "storage"}},
@@ -366,49 +497,29 @@ jobs:
 
       - name: Confluence URL import - tiny link, default format (md)
         run: |
-          docker run --rm --network host \
-            -e CONFLUENCE_EMAIL=mockuser@example.com \
-            -e CONFLUENCE_API_TOKEN=mocktoken \
-            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
-            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
-            http://127.0.0.1:18085/wiki/x/AYAJ4
+          .github/scripts/run-ci-image.sh http://127.0.0.1:18085/wiki/x/AYAJ4
           test -s sample-document.md
           grep -q '^title: "Sample document"$' sample-document.md
           rm -f sample-document.md
 
       - name: Confluence URL import - --format pdf bridges through md
         run: |
-          docker run --rm --network host \
-            -e CONFLUENCE_EMAIL=mockuser@example.com \
-            -e CONFLUENCE_API_TOKEN=mocktoken \
-            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
-            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
-            --format pdf http://127.0.0.1:18085/wiki/x/AYAJ4
+          .github/scripts/run-ci-image.sh --format pdf http://127.0.0.1:18085/wiki/x/AYAJ4
           test -s sample-document.pdf
           rm -f sample-document.pdf
 
       - name: Confluence URL import - --format confluence is byte-identical to the source
         run: |
-          docker run --rm --network host \
-            -e CONFLUENCE_EMAIL=mockuser@example.com \
-            -e CONFLUENCE_API_TOKEN=mocktoken \
-            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
-            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
-            --format confluence http://127.0.0.1:18085/wiki/x/AYAJ4
+          .github/scripts/run-ci-image.sh --format confluence http://127.0.0.1:18085/wiki/x/AYAJ4
 
-          docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
-            --format confluence --output-name sample-fixture sample.md
+          .github/scripts/run-ci-image.sh --format confluence --output-name sample-fixture sample.md
 
           diff sample-document.confluence sample-fixture.confluence
           rm -f sample-document.confluence sample-fixture.confluence
 
       - name: Confluence URL import - direct /pages/<id> URL (no redirect)
         run: |
-          docker run --rm --network host \
-            -e CONFLUENCE_EMAIL=mockuser@example.com \
-            -e CONFLUENCE_API_TOKEN=mocktoken \
-            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
-            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+          .github/scripts/run-ci-image.sh \
             --output-name direct-test \
             http://127.0.0.1:18085/wiki/spaces/DEV/pages/12345/Sample+Page
           test -s direct-test.md
@@ -418,11 +529,7 @@ jobs:
       # an imported page, against the page-12346 fixtures set up above.
       - name: Confluence URL import - --format md downloads and resolves attachments
         run: |
-          docker run --rm --network host \
-            -e CONFLUENCE_EMAIL=mockuser@example.com \
-            -e CONFLUENCE_API_TOKEN=mocktoken \
-            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
-            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+          .github/scripts/run-ci-image.sh \
             --format md --output-name page \
             http://127.0.0.1:18085/wiki/spaces/DEV/pages/12346/Sample+Attachments
 
@@ -479,11 +586,7 @@ jobs:
           # attacker.example.invalid; it must be skipped with a warning, and
           # (since that host doesn't resolve) its absence proves no request
           # to it was ever attempted, credentialed or not.
-          docker run --rm --network host \
-            -e CONFLUENCE_EMAIL=mockuser@example.com \
-            -e CONFLUENCE_API_TOKEN=mocktoken \
-            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
-            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+          .github/scripts/run-ci-image.sh \
             --format md --output-name page \
             http://127.0.0.1:18085/wiki/spaces/DEV/pages/12346/Sample+Attachments 2>cross-origin.txt
           grep -q "skipping attachment 'exfil.png': its download link points outside" cross-origin.txt
@@ -495,11 +598,7 @@ jobs:
           # Re-uploading a saved .confluence file to Confluence needs it to
           # still reference attachments by name, not by a local path, so this
           # format is the one exception that does not download anything.
-          docker run --rm --network host \
-            -e CONFLUENCE_EMAIL=mockuser@example.com \
-            -e CONFLUENCE_API_TOKEN=mocktoken \
-            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
-            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+          .github/scripts/run-ci-image.sh \
             --format confluence --output-name page \
             http://127.0.0.1:18085/wiki/spaces/DEV/pages/12346/Sample+Attachments
           test -s page.confluence
@@ -509,11 +608,7 @@ jobs:
 
       - name: Confluence URL import - --format pdf embeds images, --no-attachments does not fetch them
         run: |
-          docker run --rm --network host \
-            -e CONFLUENCE_EMAIL=mockuser@example.com \
-            -e CONFLUENCE_API_TOKEN=mocktoken \
-            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
-            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+          .github/scripts/run-ci-image.sh \
             --format pdf --output-name page \
             http://127.0.0.1:18085/wiki/spaces/DEV/pages/12346/Sample+Attachments
           test -s page.pdf
@@ -528,11 +623,7 @@ jobs:
           }
           rm -f page.pdf
 
-          docker run --rm --network host \
-            -e CONFLUENCE_EMAIL=mockuser@example.com \
-            -e CONFLUENCE_API_TOKEN=mocktoken \
-            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
-            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+          .github/scripts/run-ci-image.sh \
             --format md --no-attachments --output-name page \
             http://127.0.0.1:18085/wiki/spaces/DEV/pages/12346/Sample+Attachments
           test -s page.md
@@ -546,10 +637,11 @@ jobs:
           rm -f page.md
 
       - name: Confluence URL import - missing credentials fails clearly
+        env:
+          CONFLUENCE_EMAIL: ""
+          CONFLUENCE_API_TOKEN: ""
         run: |
-          if docker run --rm --network host \
-            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
-            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+          if .github/scripts/run-ci-image.sh \
             http://127.0.0.1:18085/wiki/x/AYAJ4 2>missing-creds.txt; then
             echo "ERROR: should have failed without credentials"
             exit 1
@@ -558,12 +650,11 @@ jobs:
           rm -f missing-creds.txt
 
       - name: Confluence URL import - server rejects bad credentials
+        env:
+          CONFLUENCE_EMAIL: "wrong@example.com"
+          CONFLUENCE_API_TOKEN: "wrongtoken"
         run: |
-          if docker run --rm --network host \
-            -e CONFLUENCE_EMAIL=wrong@example.com \
-            -e CONFLUENCE_API_TOKEN=wrongtoken \
-            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
-            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+          if .github/scripts/run-ci-image.sh \
             http://127.0.0.1:18085/wiki/x/AYAJ4 2>bad-creds.txt; then
             echo "ERROR: should have failed with bad credentials"
             exit 1
@@ -572,11 +663,10 @@ jobs:
           rm -f bad-creds.txt
 
       - name: Confluence URL import - refuses plain HTTP without the override
+        env:
+          PUBLISH_MD_PDF_ALLOW_INSECURE: ""
         run: |
-          if docker run --rm --network host \
-            -e CONFLUENCE_EMAIL=mockuser@example.com \
-            -e CONFLUENCE_API_TOKEN=mocktoken \
-            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+          if .github/scripts/run-ci-image.sh \
             http://127.0.0.1:18085/wiki/x/AYAJ4 2>insecure.txt; then
             echo "ERROR: should have refused plain HTTP"
             exit 1
@@ -586,11 +676,7 @@ jobs:
 
       - name: Confluence URL import - unrecognized URL shape fails clearly
         run: |
-          if docker run --rm --network host \
-            -e CONFLUENCE_EMAIL=mockuser@example.com \
-            -e CONFLUENCE_API_TOKEN=mocktoken \
-            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
-            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+          if .github/scripts/run-ci-image.sh \
             http://127.0.0.1:18085/not-confluence/foo 2>bad-url.txt; then
             echo "ERROR: should have failed on an unrecognized URL"
             exit 1
@@ -602,13 +688,35 @@ jobs:
         if: always()
         run: docker rm -f confluence-mock
 
-      # Everything below exercises the "GitHub issue / pull request to PDF"
-      # feature (issue #42) against a second nginx mock, standing in for a
-      # GitHub server at http://127.0.0.1:18086 whose REST API is under
-      # /api/v3 -- the shape GitHub Enterprise Server has, which this tool
-      # reaches through GITHUB_SERVER_URL/GITHUB_API_URL. Owner "o", repo "r":
-      # issue 1 carries the three kinds of image the downloader tells apart,
-      # and pull request 2 one of everything the renderer formats.
+  github-import:
+    name: GitHub URL import
+    needs: build
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    env:
+      MOCK_GITHUB_TOKEN: "mocktoken"
+      MOCK_GITHUB_SERVER_URL: "http://127.0.0.1:18086"
+      MOCK_GITHUB_API_URL: "http://127.0.0.1:18086/api/v3"
+      PUBLISH_MD_PDF_ALLOW_INSECURE: "1"
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Load the CI image
+        uses: ./.github/actions/load-ci-image # zizmor: ignore[self-repository]
+
+      # This job exercises the "GitHub issue / pull request to PDF" feature
+      # (issue #42) against a second nginx mock, standing in for a GitHub
+      # server at http://127.0.0.1:18086 whose REST API is under /api/v3 -- the
+      # shape GitHub Enterprise Server has, which this tool reaches through
+      # GITHUB_SERVER_URL/GITHUB_API_URL. Those are the job's MOCK_GITHUB_*
+      # env: above, renamed by run-ci-image.sh, which explains why. Owner "o",
+      # repo "r": issue 1 carries the three kinds of image the downloader
+      # tells apart, and pull request 2 one of everything the renderer formats.
       - name: GitHub URL import - build mock fixtures
         run: |
           mkdir -p /tmp/github-mock/www/api/issues/1 /tmp/github-mock/www/api/issues/2 \
@@ -726,13 +834,7 @@ jobs:
 
       - name: GitHub URL import - --format md downloads images, signed URL first
         run: |
-          docker run --rm --network host \
-            -e GITHUB_TOKEN=mocktoken \
-            -e GITHUB_SERVER_URL=http://127.0.0.1:18086 \
-            -e GITHUB_API_URL=http://127.0.0.1:18086/api/v3 \
-            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
-            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
-            --format md http://127.0.0.1:18086/o/r/issues/1
+          .github/scripts/run-ci-image.sh --format md http://127.0.0.1:18086/o/r/issues/1
           test -s r-issue-1.md
           grep -qF 'title: "Sample \"issue\": with images #1"' r-issue-1.md
           grep -q '^### Steps$' r-issue-1.md
@@ -751,13 +853,7 @@ jobs:
 
       - name: GitHub URL import - pull request, default format (pdf)
         run: |
-          docker run --rm --network host \
-            -e GITHUB_TOKEN=mocktoken \
-            -e GITHUB_SERVER_URL=http://127.0.0.1:18086 \
-            -e GITHUB_API_URL=http://127.0.0.1:18086/api/v3 \
-            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
-            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
-            http://127.0.0.1:18086/o/r/pull/2/files
+          .github/scripts/run-ci-image.sh http://127.0.0.1:18086/o/r/pull/2/files
           test -s r-pr-2.pdf
           sudo apt-get update
           sudo apt-get install -y poppler-utils
@@ -773,35 +869,23 @@ jobs:
 
       - name: GitHub URL import - --format confluence, --no-attachments downloads nothing
         run: |
-          docker run --rm --network host \
-            -e GITHUB_TOKEN=mocktoken \
-            -e GITHUB_SERVER_URL=http://127.0.0.1:18086 \
-            -e GITHUB_API_URL=http://127.0.0.1:18086/api/v3 \
-            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
-            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+          .github/scripts/run-ci-image.sh \
             --format confluence --output-name issue http://127.0.0.1:18086/o/r/issues/1
           test -s issue.confluence
           grep -qF 'user-attachments/assets/11111111-1111-4111-8111-111111111111' issue.confluence
           rm -f issue.confluence
 
-          docker run --rm --network host \
-            -e GITHUB_TOKEN=mocktoken \
-            -e GITHUB_SERVER_URL=http://127.0.0.1:18086 \
-            -e GITHUB_API_URL=http://127.0.0.1:18086/api/v3 \
-            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
-            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+          .github/scripts/run-ci-image.sh \
             --format md --no-attachments http://127.0.0.1:18086/o/r/issues/1
           test -s r-issue-1.md
           test ! -d r-issue-1-attachments
           rm -f r-issue-1.md
 
       - name: GitHub URL import - missing token fails clearly off github.com
+        env:
+          MOCK_GITHUB_TOKEN: ""
         run: |
-          if docker run --rm --network host \
-            -e GITHUB_SERVER_URL=http://127.0.0.1:18086 \
-            -e GITHUB_API_URL=http://127.0.0.1:18086/api/v3 \
-            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
-            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+          if .github/scripts/run-ci-image.sh \
             http://127.0.0.1:18086/o/r/issues/1 2>missing-token.txt; then
             echo "ERROR: should have failed without a token"
             exit 1
@@ -810,13 +894,10 @@ jobs:
           rm -f missing-token.txt
 
       - name: GitHub URL import - server rejects a bad token
+        env:
+          MOCK_GITHUB_TOKEN: "wrongtoken"
         run: |
-          if docker run --rm --network host \
-            -e GITHUB_TOKEN=wrongtoken \
-            -e GITHUB_SERVER_URL=http://127.0.0.1:18086 \
-            -e GITHUB_API_URL=http://127.0.0.1:18086/api/v3 \
-            -e PUBLISH_MD_PDF_ALLOW_INSECURE=1 \
-            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+          if .github/scripts/run-ci-image.sh \
             http://127.0.0.1:18086/o/r/issues/1 2>bad-token.txt; then
             echo "ERROR: should have failed with a bad token"
             exit 1
@@ -825,12 +906,10 @@ jobs:
           rm -f bad-token.txt
 
       - name: GitHub URL import - refuses plain HTTP without the override
+        env:
+          PUBLISH_MD_PDF_ALLOW_INSECURE: ""
         run: |
-          if docker run --rm --network host \
-            -e GITHUB_TOKEN=mocktoken \
-            -e GITHUB_SERVER_URL=http://127.0.0.1:18086 \
-            -e GITHUB_API_URL=http://127.0.0.1:18086/api/v3 \
-            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+          if .github/scripts/run-ci-image.sh \
             http://127.0.0.1:18086/o/r/issues/1 2>insecure.txt; then
             echo "ERROR: should have refused plain HTTP"
             exit 1
@@ -839,10 +918,12 @@ jobs:
           rm -f insecure.txt
 
       - name: GitHub URL import - unknown host is not sent the token
+        env:
+          MOCK_GITHUB_SERVER_URL: ""
+          MOCK_GITHUB_API_URL: ""
+          PUBLISH_MD_PDF_ALLOW_INSECURE: ""
         run: |
-          if docker run --rm \
-            -e GITHUB_TOKEN=mocktoken \
-            -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
+          if .github/scripts/run-ci-image.sh \
             https://github.example.com/o/r/issues/1 2>unknown-host.txt; then
             echo "ERROR: should have refused a host with no known API location"
             exit 1
@@ -854,44 +935,21 @@ jobs:
         if: always()
         run: docker rm -f github-mock
 
-      - name: Verify --css-file is rejected with a non-pdf format
-        run: |
-          if docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
-            --format confluence --css-file publish-md-pdf.css sample.md; then
-            echo "ERROR: --css-file with --format confluence should have failed"
-            exit 1
-          fi
+  action-self-test:
+    name: Action self-test
+    needs: build
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
 
-      - name: Verify an unknown --format is rejected
-        run: |
-          if docker run --rm -v "$PWD:/workspace" ghcr.io/b-arol-o/publish-md-pdf:v2 \
-            --format bogus sample.md; then
-            echo "ERROR: an unknown --format should have failed"
-            exit 1
-          fi
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      # The v1 --entrypoint invocations must keep working until v3.0.0.
-      - name: Verify deprecated v1 entrypoint shims still work
-        run: |
-          docker run --rm -v "$PWD:/workspace" \
-            --entrypoint /usr/local/bin/md-to-confluence.sh \
-            ghcr.io/b-arol-o/publish-md-pdf:v2 sample.md
-          test -s sample.confluence
-
-          docker run --rm -v "$PWD:/workspace" \
-            --entrypoint /usr/local/bin/confluence-to-md.sh \
-            ghcr.io/b-arol-o/publish-md-pdf:v2 --output-name sample-roundtrip sample.confluence
-          test -s sample-roundtrip.md
-
-          rm -f sample.confluence sample-roundtrip.md
-
-      - name: Verify the deprecation shims warn on stderr
-        run: |
-          docker run --rm -v "$PWD:/workspace" \
-            --entrypoint /usr/local/bin/md-to-confluence.sh \
-            ghcr.io/b-arol-o/publish-md-pdf:v2 sample.md 2>shim-stderr.txt
-          grep -q "deprecated" shim-stderr.txt
-          rm -f sample.confluence shim-stderr.txt
+      - name: Load the CI image
+        uses: ./.github/actions/load-ci-image # zizmor: ignore[self-repository]
 
       # Kept as `./` rather than zizmor's suggested `$/`: the self-test is meant
       # to exercise the action.yml in this checkout, exactly as before.

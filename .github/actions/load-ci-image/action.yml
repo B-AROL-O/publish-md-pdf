@@ -1,0 +1,31 @@
+---
+# Shared by every job in ci.yml that runs the image: the "Build image" job
+# builds it once and uploads it as the ci-image artifact, and this loads it
+# back under the tag it was built with -- ghcr.io/b-arol-o/publish-md-pdf:v2,
+# which is also action.yml's runs.image, so the "Action self-test" job runs
+# this build rather than the published one. A step, not a job: the image
+# lives in the Docker daemon of the runner that loads it, so every job that
+# needs it loads its own copy.
+#
+# Kept here rather than repeated in each job; Dependabot watches this
+# directory too (see .github/dependabot.yml), so its pinned action stays
+# current with the workflows'.
+name: Load the CI image
+description: Download the image the build job saved, and load it into this runner's Docker daemon
+
+runs:
+  using: composite
+  steps:
+    - name: Download image
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: ci-image
+        path: ${{ runner.temp }}/ci-image
+
+    - name: Load image
+      shell: bash
+      run: |
+        docker load -i "$RUNNER_TEMP/ci-image/ci-image.tar.gz"
+        rm -rf "$RUNNER_TEMP/ci-image"
+
+# EOF
